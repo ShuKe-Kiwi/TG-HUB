@@ -1,0 +1,29 @@
+"""Application configuration — loaded from environment variables / .env file."""
+
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # App
+    APP_NAME: str = "tg-hub"
+    APP_ENV: str = "development"
+    APP_HOST: str = "0.0.0.0"
+    APP_PORT: int = 8000
+
+    # Database
+    DATABASE_URL: str = "postgresql+asyncpg://localhost/tg_hub_dev"
+    TEST_DATABASE_URL: str = "postgresql+asyncpg://localhost/tg_hub_test"
+
+    # Logging
+    LOG_LEVEL: str = "DEBUG"
+
+
+settings = Settings()
