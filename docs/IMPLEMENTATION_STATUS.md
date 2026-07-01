@@ -1,0 +1,102 @@
+# TG-HUB 实施进度
+
+> 架构基准：docs/ARCHITECTURE.md V2.1-final
+> 最后更新：2026-07-01
+
+---
+
+## 阶段总览
+
+| Phase | 目标 | 状态 | 测试 |
+|-------|------|------|------|
+| P1 | 数据模型 + RawMessage 入库 | ✅ 完成 | 7/7 |
+| P2-A | Parser DTO + 样本测试框架 | ✅ 完成 | 14/14 |
+| P2-B | Parser Pipeline 完整实现 | ✅ 完成 | 72/72 |
+| P2-C | Parser 结果写回 + 失败状态记录 | ⏳ 待开始 | — |
+| P3 | Normalizer + Fingerprint | ⏳ 待开始 | — |
+| P4 | Dedup + Merge + ResourceSource | ⏳ 待开始 | — |
+| P5 | EventBus + Bot | ⏳ 待开始 | — |
+
+---
+
+## P2-B 详细记录
+
+### 完成日期
+2026-07-01
+
+### 实现内容
+
+**Pipeline 5 阶段（顺序不可变）：**
+1. **PreProcessor** — 清理 Emoji、TG Markdown，统一空白，保留中文/链接/提取码/【】
+2. **RuleParser** — 从文本提取 title/raw_title/resource_type/tags，不依赖 links
+3. **ProviderDetector** — 检测 quark/baidu/aliyun URL + xunlei 口令/magnet，提取 share_id/access_code
+4. **MetadataExtractor** — 提取 episode_no/season_no/episode_range/year/quality/file_size/language/subtitle
+5. **PostProcessor** — 注入 parser_version/rule_version，计算 confidence，保证 links/tags 默认值
+
+**版本：**
+- DTO 默认 parser_version / rule_version = `""`
+- parser_version = "0.2.0"
+- rule_version = "0.2.0"
+
+**Provider 合约：**
+- `LinkProvider` 为 `str` compatible Enum
+- 支持 quark / baidu / xunlei / aliyun / mega / google / other
+- 未知 provider 统一归一为 `other`，不暴露 `lnz`
+
+### 测试覆盖
+
+| 测试类 | 测试数 | 覆盖内容 |
+|--------|--------|----------|
+| TestPreProcessor | 9 | 空文本、中文保留、链接保留、【】保留、Markdown 清理、Emoji 清理、空白归一 |
+| TestProviderDetector | 7 | 夸克+提取码、百度无码、阿里云+码、迅雷口令、magnet、多链接+独立码、无链接 |
+| TestMetadataExtractor | 15 | 第N集(阿拉伯/中文)、第N-M集、更新至N集、全集、SxxExx、SxxExx-Eyy、画质、文件大小、语言、字幕、年份、季、无元数据 |
+| TestRuleParser | 8 | 【】标题、无括号标题、raw_title 保留、drama 类型、movie 类型、tags 提取、空文本、纯链接 |
+| TestPostProcessor | 6 | 版本注入、confidence 计算(3场景)、links 默认、tags 默认 |
+| TestPipelineIntegration | 20 | 20 条 fixture 全字段断言 |
+| TestPipelineBoundary | 6 | 空文本、纯空白、无链接、纯链接无标题、纯提取码、None 输入 |
+
+**P2-B 合计：72 测试，全部通过；Parser 合计：86 测试，全部通过**
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `backend/tests/parser/test_parser_p2b.py` | P2-B 测试（72 条） |
+| `docs/IMPLEMENTATION_STATUS.md` | 本文件 |
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/app/modules/parser/dto.py` | DTO 合约：版本默认值为空、未知 provider 归一为 other |
+| `backend/app/modules/parser/pipeline/core.py` | 重写：5 Stages 完整实现 + Pipeline 编排 |
+| `backend/tests/parser/fixtures.py` | 增加 expected_title / expected_result_count；修正 magnet URL |
+| `backend/tests/parser/test_parser_p2a.py` | 校验 DTO 版本默认值和 provider fallback |
+
+### 未做内容（边界确认）
+
+- ❌ 未创建 Work / Resource / ResourceLink / ResourceSource
+- ❌ 未实现 Normalizer / Fingerprint / Dedup / Merge
+- ❌ 未写入数据库（RawMessage.parsed_data）
+- ❌ 未写入 parse_status / last_parse_error（失败返回 `[]`；延后到 P2-C）
+- ❌ 未实现 EventBus / DomainEvent / Notify
+- ❌ 未实现 Bot 命令
+- ❌ 未实现 Transfer / Subscription / User
+- ❌ 未实现 SpecialParser
+- ❌ 未实现 AI 解析 / 模糊匹配
+- ❌ 未修改 ARCHITECTURE.md 架构内容
+
+---
+
+## P2-A 详细记录
+
+### 完成日期
+2026-07-01
+
+### 实现内容
+- ParsedLink DTO（8 字段）
+- ParsedMetadata DTO（8 字段）
+- ParsedResource DTO（10 字段）
+- 20 条样本 fixture
+- Pipeline 空骨架
+- 14 条测试
