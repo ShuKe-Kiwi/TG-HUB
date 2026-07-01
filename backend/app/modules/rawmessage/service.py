@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.infra.eventbus import EventBus
+from app.infra.events import ResourceCreated, ResourceMerged
 from app.infra.logger import get_logger
 from app.modules.normalizer.core import normalize_resource
 from app.modules.parser.pipeline.core import (
@@ -23,6 +25,7 @@ from app.modules.parser.pipeline.core import (
 from app.modules.rawmessage.model import RawMessage
 from app.modules.rawmessage.repository import RawMessageRepository
 from app.modules.rawmessage.schema import RawMessageCreate
+from app.modules.resource.schema import DedupResult
 from app.modules.resource.service import DedupService, deserialize_parsed_resource
 
 logger = get_logger(__name__)
@@ -146,7 +149,11 @@ class RawMessageService:
         await self.session.refresh(raw_message)
         return raw_message
 
-    async def dedup_and_persist(self, raw_msg_id: int) -> RawMessage:
+    async def dedup_and_persist(
+        self,
+        raw_msg_id: int,
+        event_bus: EventBus | None = None,
+    ) -> RawMessage:
         """Run DedupService for each parsed resource in a RawMessage.
 
         Status machine:
@@ -156,7 +163,8 @@ class RawMessageService:
           - any exception → rollback, reload, keep dedup_status = dedup_pending
 
         Transaction boundary: all dedup operations share one AsyncSession;
-        commit is called here (the DedupService only flushes).
+        commit is called here (the DedupService only flushes). Resource events
+        are published only after that commit succeeds.
         """
         raw_message = await self.repo.get_by_id(raw_msg_id)
         if raw_message is None:
@@ -170,6 +178,7 @@ class RawMessageService:
             return raw_message
 
         dedup_service = self._dedup_service or DedupService(self.session)
+        dedup_results: list[DedupResult] = []
         try:
             any_new = False
             for item in raw_message.parsed_data:
@@ -181,6 +190,7 @@ class RawMessageService:
                     raw_message_id=raw_message.id,
                     channel_id=raw_message.channel_id,
                 )
+                dedup_results.append(result)
                 if result.is_new:
                     any_new = True
 
@@ -196,6 +206,36 @@ class RawMessageService:
             logger.exception(
                 "DedupService failed for RawMessage id=%s", raw_msg_id,
             )
+        else:
+            if event_bus is not None:
+                for result in dedup_results:
+                    event = None
+                    if result.is_new:
+                        event = ResourceCreated(
+                            resource_id=result.resource_id,
+                            work_id=result.work_id,
+                            raw_message_id=raw_msg_id,
+                            source_count=result.source_count,
+                        )
+                    elif result.created_source or result.created_link_count > 0:
+                        event = ResourceMerged(
+                            resource_id=result.resource_id,
+                            work_id=result.work_id,
+                            raw_message_id=raw_msg_id,
+                            source_count=result.source_count,
+                            created_link_count=result.created_link_count,
+                            created_source=result.created_source,
+                        )
+
+                    if event is not None:
+                        try:
+                            await event_bus.publish(event)
+                        except Exception:
+                            logger.exception(
+                                "EventBus failed to publish %s for RawMessage id=%s",
+                                type(event).__name__,
+                                raw_msg_id,
+                            )
 
         await self.session.refresh(raw_message)
         return raw_message

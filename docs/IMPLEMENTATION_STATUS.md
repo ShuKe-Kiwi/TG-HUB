@@ -18,6 +18,42 @@
 | P4-A | Resource Registry 模型 + Repository | ✅ 完成 | 6/6 |
 | P4-B | Dedup / Merge Service | ✅ 完成 | 17/17 |
 | P5-A | 事件契约 + InMemory EventBus | ✅ 完成 | 8/8 |
+| P5-B | Commit 后发布资源事件 | ✅ 完成 | 6/6 |
+
+---
+
+## P5-B 详细记录
+
+### 完成日期
+2026-07-02
+
+### 实现内容
+
+- `RawMessageService.dedup_and_persist()` 支持可选 `EventBus`
+- `DedupService` 保持 flush-only，commit 仍由 `RawMessageService` 负责
+- `ResourceCreated` / `ResourceMerged` 仅在数据库 commit 成功后发布
+- 完全幂等重放、skipped 和 commit 失败均不发布资源事件
+- EventBus 发布异常只记录日志，不回滚已提交数据
+- 本阶段不发布 `RawMessageFailed`
+
+### 事件判定
+
+| DedupResult | 事件 |
+|-------------|------|
+| `is_new=True` | `ResourceCreated` |
+| `is_new=False` 且新增 source 或 link | `ResourceMerged` |
+| `is_new=False` 且无数据变化 | 不发布 |
+
+**P5-B 合计：6 测试，全部通过**
+
+### 边界确认
+
+- ❌ 未实现 Notify Handler / Telegram Bot
+- ❌ 未实现 Query Service
+- ❌ 未实现 Outbox / Redis / Kafka
+- ❌ 未发布 RawMessageFailed
+- ❌ 未修改 ARCHITECTURE.md
+- ❌ 未进入 P5-C / P5-D / P5-E
 
 ---
 
