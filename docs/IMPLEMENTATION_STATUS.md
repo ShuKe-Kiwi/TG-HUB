@@ -13,9 +13,51 @@
 | P2-A | Parser DTO + 样本测试框架 | ✅ 完成 | 14/14 |
 | P2-B | Parser Pipeline 完整实现 | ✅ 完成 | 72/72 |
 | P2-C | Parser 结果写回 + 失败状态记录 | ✅ 完成 | 5/5 |
-| P3 | Normalizer + Fingerprint | ⏳ 待开始 | — |
+| P3-A | Normalizer + Fingerprint 纯函数 | ✅ 完成 | 48/48 |
 | P4 | Dedup + Merge + ResourceSource | ⏳ 待开始 | — |
 | P5 | EventBus + Bot | ⏳ 待开始 | — |
+
+---
+
+## P3-A 详细记录
+
+### 完成日期
+2026-07-01
+
+### 实现内容
+
+- 新增纯函数 `normalizer` 模块，不依赖 ORM / Repository / Session
+- `content_type` 仅表示 drama / movie / variety / anime / other
+- `episode_kind` 独立表示 single_episode / episode_range / full / unknown
+- Metadata 优先于标题推断，并保留 `episode_source`
+- `episode_range` 统一为 epN / epN-M / all / sXXeN / sXXeN-M / unknown
+- 生成稳定的 work_key / resource_key / episode_key / content_fingerprint
+- `episode_key` 仅 single_episode 生成
+- 标题归一化保持保守，仅删除独立前缀、装饰和明确集数
+- 输入 `ParsedResource` 不原地修改，归一化输出为 frozen dataclass
+
+### 测试覆盖
+
+- 架构中的 6 组标题与集数归一化示例
+- 全角、大小写、空白、装饰符和独立前缀
+- 防止过度删除有效标题内容
+- Metadata/标题冲突与 episode_source
+- 尾部两位纯数字正例及带 year/quality/file_size 的负例
+- 单集、中英文范围、全集、季度集数和 unknown
+- key 精确值、episode_key 适用范围和非法范围拒绝
+- SHA-256 稳定性与身份字段差异
+- 输入不变性和输出不可变性
+
+**P3-A 合计：48 测试，全部通过；全量合计：146 测试，全部通过**
+
+### 边界确认
+
+- ❌ 未接入 ORM / Repository / Session
+- ❌ 未创建或修改数据库表
+- ❌ 未写入 RawMessage.parsed_data
+- ❌ 未创建 Work / Resource / ResourceLink / ResourceSource
+- ❌ 未实现 Dedup / Merge
+- ❌ 未实现 EventBus / Bot / Transfer
 
 ---
 
