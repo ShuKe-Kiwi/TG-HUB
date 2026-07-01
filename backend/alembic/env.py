@@ -18,6 +18,12 @@ from app.database import Base
 # Import models so they are registered on Base.metadata
 from app.modules.channel.model import Channel  # noqa: F401
 from app.modules.rawmessage.model import RawMessage  # noqa: F401
+from app.modules.resource.model import (  # noqa: F401
+    Resource,
+    ResourceLink,
+    ResourceSource,
+    Work,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

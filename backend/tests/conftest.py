@@ -16,6 +16,12 @@ from app.database import Base
 # Import models so they register on Base.metadata
 from app.modules.channel.model import Channel  # noqa: F401
 from app.modules.rawmessage.model import RawMessage  # noqa: F401
+from app.modules.resource.model import (  # noqa: F401
+    Resource,
+    ResourceLink,
+    ResourceSource,
+    Work,
+)
 
 
 @pytest_asyncio.fixture

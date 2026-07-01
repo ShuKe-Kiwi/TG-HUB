@@ -15,8 +15,43 @@
 | P2-C | Parser 结果写回 + 失败状态记录 | ✅ 完成 | 5/5 |
 | P3-A | Normalizer + Fingerprint 纯函数 | ✅ 完成 | 48/48 |
 | P3-B | Parser + Normalizer 纯函数链路联调 | ✅ 完成 | 29/29 |
-| P4 | Dedup + Merge + ResourceSource | ⏳ 待开始 | — |
+| P4-A | Resource Registry 模型 + Repository | ✅ 完成 | 6/6 |
+| P4-B | Dedup + Merge 业务流程 | ⏳ 待开始 | — |
 | P5 | EventBus + Bot | ⏳ 待开始 | — |
+
+---
+
+## P4-A 详细记录
+
+### 完成日期
+2026-07-01
+
+### 实现内容
+
+- 新增 Work / Resource / ResourceLink / ResourceSource ORM
+- 新增四个仅含 create/get 的最小 Repository
+- 新增 Resource Registry Alembic migration `7b3f2a1c9d04`
+- Alembic CLI 支持从 backend 目录正确加载 app 包
+- 未接入 ParserPipeline、Normalizer 或 RawMessage.parsed_data
+
+### PostgreSQL 验证
+
+- `Work.work_key` UNIQUE 实际重复插入失败
+- `Resource.resource_key` UNIQUE 实际重复插入失败
+- `ResourceLink(resource_id, provider, url_hash)` UNIQUE 实际重复插入失败
+- `ResourceSource(resource_id, raw_message_id)` UNIQUE 实际重复插入失败
+- `pg_constraint` 确认四个命名约束真实存在
+- `tg_hub_test` 完成 Alembic `upgrade head` / `check` / `downgrade base`
+
+**P4-A 合计：6 测试，全部通过；全量合计：181 测试，全部通过**
+
+### 边界确认
+
+- ❌ 未实现 Dedup / Merge 业务流程
+- ❌ 未接入 ParserPipeline / Normalizer
+- ❌ 未读取或写入 RawMessage.parsed_data
+- ❌ 未实现 EventBus / Bot / Transfer
+- ❌ 未进入 P4-B
 
 ---
 
