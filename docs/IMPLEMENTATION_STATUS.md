@@ -12,10 +12,44 @@
 | P1 | 数据模型 + RawMessage 入库 | ✅ 完成 | 7/7 |
 | P2-A | Parser DTO + 样本测试框架 | ✅ 完成 | 14/14 |
 | P2-B | Parser Pipeline 完整实现 | ✅ 完成 | 72/72 |
-| P2-C | Parser 结果写回 + 失败状态记录 | ⏳ 待开始 | — |
+| P2-C | Parser 结果写回 + 失败状态记录 | ✅ 完成 | 5/5 |
 | P3 | Normalizer + Fingerprint | ⏳ 待开始 | — |
 | P4 | Dedup + Merge + ResourceSource | ⏳ 待开始 | — |
 | P5 | EventBus + Bot | ⏳ 待开始 | — |
+
+---
+
+## P2-C 详细记录
+
+### 完成日期
+2026-07-01
+
+### 实现内容
+
+- `RawMessageService.parse_and_persist()` 调用现有 `ParserPipeline`
+- 成功时将 `list[ParsedResource]` 序列化快照直接写入 `parsed_data`
+- 成功时写回 `parse_status=parsed` / parser 和 rule 版本
+- 空结果或异常时写回 `parse_status=parse_failed` / `last_parse_error`
+- 每次尝试递增 `parse_attempts` 并更新 `last_parsed_at`
+- 重试成功时清除旧的 `last_parse_error`
+- RawMessage 已有全部 P2-C 字段，无需新增 Alembic migration
+
+### 测试覆盖
+
+- 解析成功并持久化 DTO 快照与版本
+- 空结果持久化为明确失败
+- Pipeline 异常持久化错误类型与消息
+- 失败后重试成功，次数递增并清除旧错误
+- RawMessage 不存在时抛出 `LookupError`
+
+**P2-C 合计：5 测试，全部通过；全量合计：98 测试，全部通过**
+
+### 边界确认
+
+- ❌ 未创建 Work / Resource / ResourceLink / ResourceSource
+- ❌ 未实现 Normalizer / Fingerprint / Dedup / Merge
+- ❌ 未实现 EventBus / DomainEvent / Notify / Bot / Transfer
+- ❌ 未进入 P3
 
 ---
 
@@ -77,8 +111,7 @@
 
 - ❌ 未创建 Work / Resource / ResourceLink / ResourceSource
 - ❌ 未实现 Normalizer / Fingerprint / Dedup / Merge
-- ❌ 未写入数据库（RawMessage.parsed_data）
-- ❌ 未写入 parse_status / last_parse_error（失败返回 `[]`；延后到 P2-C）
+- P2-B 本身不写数据库；RawMessage 解析结果写回由 P2-C 负责
 - ❌ 未实现 EventBus / DomainEvent / Notify
 - ❌ 未实现 Bot 命令
 - ❌ 未实现 Transfer / Subscription / User

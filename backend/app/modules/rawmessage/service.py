@@ -14,11 +14,18 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.logger import get_logger
+from app.modules.parser.pipeline.core import (
+    PARSER_VERSION,
+    RULE_VERSION,
+    ParserPipeline,
+)
 from app.modules.rawmessage.model import RawMessage
 from app.modules.rawmessage.repository import RawMessageRepository
 from app.modules.rawmessage.schema import RawMessageCreate
 
 logger = get_logger(__name__)
+
+EMPTY_PARSE_ERROR = "ParserPipeline returned no resources"
 
 
 def _compute_content_hash(raw_text: str) -> str:
@@ -27,9 +34,14 @@ def _compute_content_hash(raw_text: str) -> str:
 
 
 class RawMessageService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        parser_pipeline: ParserPipeline | None = None,
+    ) -> None:
         self.session = session
         self.repo = RawMessageRepository(session)
+        self.parser_pipeline = parser_pipeline or ParserPipeline()
 
     async def ingest(self, data: RawMessageCreate) -> RawMessage:
         """Idempotent ingest: returns existing or creates new RawMessage.
@@ -86,3 +98,46 @@ class RawMessageService:
         self, channel_id: int, tg_message_id: int
     ) -> RawMessage | None:
         return await self.repo.get_by_channel_and_msg_id(channel_id, tg_message_id)
+
+    async def parse_and_persist(self, raw_msg_id: int) -> RawMessage:
+        """Run ParserPipeline and persist its outcome on one RawMessage.
+
+        This is the P2-C boundary: it only updates parser-owned RawMessage fields.
+        It does not create or update Work, Resource, dedup, or notification data.
+        """
+        raw_message = await self.repo.get_by_id(raw_msg_id)
+        if raw_message is None:
+            raise LookupError(f"RawMessage id={raw_msg_id} not found")
+
+        raw_message.parse_attempts = (raw_message.parse_attempts or 0) + 1
+        raw_message.parser_version = PARSER_VERSION
+        raw_message.rule_version = RULE_VERSION
+
+        try:
+            resources = await self.parser_pipeline.parse(
+                raw_message.raw_text,
+                raw_message_id=raw_message.id,
+            )
+            if not resources:
+                raw_message.parsed_data = None
+                raw_message.parse_status = "parse_failed"
+                raw_message.last_parse_error = EMPTY_PARSE_ERROR
+            else:
+                raw_message.parsed_data = [
+                    resource.model_dump(mode="json") for resource in resources
+                ]
+                raw_message.parse_status = "parsed"
+                raw_message.last_parse_error = None
+        except Exception as exc:
+            raw_message.parsed_data = None
+            raw_message.parse_status = "parse_failed"
+            raw_message.last_parse_error = f"{type(exc).__name__}: {exc}"
+            logger.exception(
+                "ParserPipeline failed for RawMessage id=%s",
+                raw_message.id,
+            )
+
+        raw_message.last_parsed_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        await self.session.refresh(raw_message)
+        return raw_message

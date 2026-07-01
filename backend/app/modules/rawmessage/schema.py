@@ -30,7 +30,7 @@ class RawMessageRead(BaseModel):
     ingest_status: str
     parse_status: str
     dedup_status: str
-    parsed_data: dict | None
+    parsed_data: list[dict] | None
     parser_version: str | None
     rule_version: str | None
     parse_attempts: int

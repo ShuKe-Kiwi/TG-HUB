@@ -65,7 +65,7 @@ class RawMessage(Base):
     dedup_status: Mapped[str] = mapped_column(String(20), default="dedup_pending")
 
     # Parse metadata
-    parsed_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    parsed_data: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
     parser_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
     rule_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
     parse_attempts: Mapped[int] = mapped_column(Integer, default=0)
