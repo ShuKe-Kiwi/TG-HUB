@@ -1,7 +1,7 @@
 # TG-HUB 实施进度
 
 > 架构基准：docs/ARCHITECTURE.md V2.1-final
-> 最后更新：2026-07-01
+> 最后更新：2026-07-02
 
 ---
 
@@ -17,7 +17,35 @@
 | P3-B | Parser + Normalizer 纯函数链路联调 | ✅ 完成 | 29/29 |
 | P4-A | Resource Registry 模型 + Repository | ✅ 完成 | 6/6 |
 | P4-B | Dedup / Merge Service | ✅ 完成 | 17/17 |
-| P5 | EventBus + Bot | ⏳ 待开始 | — |
+| P5-A | 事件契约 + InMemory EventBus | ✅ 完成 | 8/8 |
+
+---
+
+## P5-A 详细记录
+
+### 完成日期
+2026-07-02
+
+### 实现内容
+
+- 定义仅携带标量字段的 `ResourceCreated`、`ResourceMerged`、`RawMessageFailed`
+- 新增 `EventBus` 抽象接口和进程内 `InMemoryEventBus`
+- `subscribe()` 按事件精确类型注册多个异步 handler
+- `publish()` 按注册顺序逐个等待 handler
+- 单个 handler 异常只记录日志，不阻断后续 handler，也不向发布方抛出
+- 无订阅者时安全返回
+
+**P5-A 合计：8 测试，全部通过**
+
+### 边界确认
+
+- ❌ 未接入 DedupService / RawMessageService
+- ❌ 未修改 Resource Repository
+- ❌ 未修改 main.py / lifespan
+- ❌ 未新增数据库表或 migration
+- ❌ 未实现持久化、重试、补发、Outbox、Redis 或 Kafka
+- ❌ 未实现 Notify Handler / Telegram Bot / Transfer
+- ❌ 未进入 P5-B
 
 ---
 
