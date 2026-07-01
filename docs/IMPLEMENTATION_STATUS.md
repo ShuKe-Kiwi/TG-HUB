@@ -19,6 +19,38 @@
 | P4-B | Dedup / Merge Service | ✅ 完成 | 17/17 |
 | P5-A | 事件契约 + InMemory EventBus | ✅ 完成 | 8/8 |
 | P5-B | Commit 后发布资源事件 | ✅ 完成 | 6/6 |
+| P5-C | Resource 查询 ViewModel | ✅ 完成 | 14/14 |
+
+---
+
+## P5-C 详细记录
+
+### 完成日期
+2026-07-02
+
+### 实现内容
+
+- 新增 `ResourceListItem`、`ResourceDetail`、`LinkView`、`SourceView`
+- ViewModel 使用 Pydantic，从查询标量显式构造，不包含 ORM
+- 新增 `latest()`、`search()`、`get_detail()` 三个只读查询
+- Work / Resource 均按既有 `status=active` 过滤
+- `latest()` 按 `last_seen_at DESC, id DESC` 稳定排序
+- `search()` 使用参数绑定和 LIKE escape 处理 `\`、`%`、`_`
+- 详情固定查询主体、Links、Sources，避免 N+1
+- SourceView 通过 LEFT JOIN 映射现有 Channel 名称和用户名
+
+**P5-C 合计：14 测试，全部通过**
+
+### 只读与边界确认
+
+- ✅ 仅执行 SELECT，不调用 flush / commit
+- ✅ 查询前后四表计数及 Session new / dirty / deleted 不变
+- ✅ 未暴露 ORM、relationship 或 parsed_snapshot
+- ❌ 未修改 repository.py、RawMessageService 或 DedupService
+- ❌ 未接 Telegram / EventBus / Notify
+- ❌ 未新增 migration / index / table
+- ❌ 未实现全文检索、模糊搜索、分页总数
+- ❌ 未进入 P5-D / P5-E
 
 ---
 
