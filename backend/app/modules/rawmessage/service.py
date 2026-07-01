@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.logger import get_logger
+from app.modules.normalizer.core import normalize_resource
 from app.modules.parser.pipeline.core import (
     PARSER_VERSION,
     RULE_VERSION,
@@ -22,6 +23,7 @@ from app.modules.parser.pipeline.core import (
 from app.modules.rawmessage.model import RawMessage
 from app.modules.rawmessage.repository import RawMessageRepository
 from app.modules.rawmessage.schema import RawMessageCreate
+from app.modules.resource.service import DedupService, deserialize_parsed_resource
 
 logger = get_logger(__name__)
 
@@ -38,10 +40,12 @@ class RawMessageService:
         self,
         session: AsyncSession,
         parser_pipeline: ParserPipeline | None = None,
+        dedup_service: DedupService | None = None,
     ) -> None:
         self.session = session
         self.repo = RawMessageRepository(session)
         self.parser_pipeline = parser_pipeline or ParserPipeline()
+        self._dedup_service = dedup_service
 
     async def ingest(self, data: RawMessageCreate) -> RawMessage:
         """Idempotent ingest: returns existing or creates new RawMessage.
@@ -139,5 +143,59 @@ class RawMessageService:
 
         raw_message.last_parsed_at = datetime.now(timezone.utc)
         await self.session.commit()
+        await self.session.refresh(raw_message)
+        return raw_message
+
+    async def dedup_and_persist(self, raw_msg_id: int) -> RawMessage:
+        """Run DedupService for each parsed resource in a RawMessage.
+
+        Status machine:
+          - parsed_data is None or []          → dedup_status = skipped
+          - at least one DedupResult.is_new    → dedup_status = new
+          - all DedupResult.is_new is False    → dedup_status = matched
+          - any exception → rollback, reload, keep dedup_status = dedup_pending
+
+        Transaction boundary: all dedup operations share one AsyncSession;
+        commit is called here (the DedupService only flushes).
+        """
+        raw_message = await self.repo.get_by_id(raw_msg_id)
+        if raw_message is None:
+            raise LookupError(f"RawMessage id={raw_msg_id} not found")
+
+        # No parsed data → skip
+        if not raw_message.parsed_data:
+            raw_message.dedup_status = "skipped"
+            await self.session.commit()
+            await self.session.refresh(raw_message)
+            return raw_message
+
+        dedup_service = self._dedup_service or DedupService(self.session)
+        try:
+            any_new = False
+            for item in raw_message.parsed_data:
+                parsed = deserialize_parsed_resource(item)
+                normalized = normalize_resource(parsed)
+                result = await dedup_service.dedup(
+                    normalized=normalized,
+                    parsed=parsed,
+                    raw_message_id=raw_message.id,
+                    channel_id=raw_message.channel_id,
+                )
+                if result.is_new:
+                    any_new = True
+
+            raw_message.dedup_status = "new" if any_new else "matched"
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            # ORM state is stale after rollback → reload
+            raw_message = await self.repo.get_by_id(raw_msg_id)
+            assert raw_message is not None  # confirmed to exist above
+            raw_message.dedup_status = "dedup_pending"
+            await self.session.commit()
+            logger.exception(
+                "DedupService failed for RawMessage id=%s", raw_msg_id,
+            )
+
         await self.session.refresh(raw_message)
         return raw_message

@@ -99,6 +99,96 @@ def _serialize_metadata(
 
 
 # ---------------------------------------------------------------------------
+# Deserialization (reverse of serialize — no model_validate)
+# ---------------------------------------------------------------------------
+def deserialize_parsed_resource(data: dict) -> ParsedResource:
+    """Reconstruct a ParsedResource from a JSON-safe dict.
+
+    Handles LinkProvider str/Enum, None metadata, and missing fields.
+    Raises ``ValueError`` on missing or invalid required fields.
+
+    This is the reverse of ``serialize_parsed_resource`` and also compatible
+    with P2-C ``model_dump(mode=\"json\")`` output.
+    """
+    # --- required ---
+    title = data.get("title")
+    raw_title = data.get("raw_title")
+    if not isinstance(title, str) or not isinstance(raw_title, str):
+        raise ValueError(
+            "Missing required fields: 'title' and 'raw_title' must be strings"
+        )
+
+    # --- links ---
+    links_data = data.get("links", [])
+    if not isinstance(links_data, list):
+        raise ValueError("'links' must be a list")
+    links = [_deserialize_link(ld) for ld in links_data]
+
+    # --- metadata ---
+    metadata_raw = data.get("metadata")
+    metadata = _deserialize_metadata(metadata_raw) if isinstance(metadata_raw, dict) else None
+
+    return ParsedResource(
+        title=title,
+        raw_title=raw_title,
+        description=data.get("description"),
+        resource_type=data.get("resource_type", "drama"),
+        links=links,
+        metadata=metadata,
+        tags=list(data.get("tags", [])),
+        confidence=data.get("confidence", 1.0),
+        parser_version=data.get("parser_version", ""),
+        rule_version=data.get("rule_version", ""),
+    )
+
+
+def _deserialize_link(data: dict) -> ParsedLink:
+    """Reconstruct ParsedLink from a dict.  Handles provider str/Enum."""
+    provider_raw = data.get("provider")
+    if isinstance(provider_raw, LinkProvider):
+        provider = provider_raw
+    elif isinstance(provider_raw, str):
+        try:
+            provider = LinkProvider(provider_raw)
+        except (ValueError, TypeError):
+            provider = LinkProvider.OTHER
+    else:
+        raise ValueError(
+            f"Invalid 'provider': expected str or LinkProvider, "
+            f"got {type(provider_raw).__name__}"
+        )
+
+    original_text = data.get("original_text", "")
+    if not isinstance(original_text, str):
+        raise ValueError("'original_text' must be a string")
+
+    return ParsedLink(
+        provider=provider,
+        original_text=original_text,
+        url=data.get("url"),
+        share_id=data.get("share_id"),
+        access_code=data.get("access_code"),
+        password=data.get("password"),
+        link_type=data.get("link_type", "url"),
+        confidence=data.get("confidence", 1.0),
+    )
+
+
+def _deserialize_metadata(data: dict) -> ParsedMetadata:
+    """Reconstruct ParsedMetadata from a dict."""
+    return ParsedMetadata(
+        episode_no=data.get("episode_no"),
+        season_no=data.get("season_no"),
+        episode_range=data.get("episode_range"),
+        year=data.get("year"),
+        quality=data.get("quality"),
+        file_size=data.get("file_size"),
+        language=data.get("language"),
+        subtitle=data.get("subtitle"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # URL hash builder (stable, deterministic)
 # ---------------------------------------------------------------------------
 def _build_url_hash(link: ParsedLink) -> str:

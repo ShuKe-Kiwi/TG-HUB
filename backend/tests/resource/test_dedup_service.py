@@ -40,6 +40,7 @@ from app.modules.resource.repository import WorkRepository
 from app.modules.resource.schema import DedupResult
 from app.modules.resource.service import (
     DedupService,
+    deserialize_parsed_resource,
     serialize_parsed_resource,
 )
 
@@ -149,6 +150,51 @@ class TestSerialize:
     def test_serialize_empty_links(self):
         parsed = _make_parsed_resource(links=[])
         assert serialize_parsed_resource(parsed)["links"] == []
+
+    # ------------------------------------------------------------------
+    # Deserialize (reverse symmetry)
+    # ------------------------------------------------------------------
+
+    def test_deserialize_roundtrip(self):
+        """serialize → deserialize → field fidelity."""
+        parsed = _make_parsed_resource()
+        serialized = serialize_parsed_resource(parsed)
+        restored = deserialize_parsed_resource(serialized)
+        assert restored.title == parsed.title
+        assert restored.raw_title == parsed.raw_title
+        assert restored.resource_type == parsed.resource_type
+        assert restored.confidence == parsed.confidence
+        assert restored.parser_version == parsed.parser_version
+        assert restored.links[0].provider == parsed.links[0].provider
+        assert restored.metadata is not None
+        assert restored.metadata.episode_no == parsed.metadata.episode_no
+
+    def test_deserialize_missing_title(self):
+        """Missing title/raw_title → ValueError."""
+        with pytest.raises(ValueError, match="Missing required fields"):
+            deserialize_parsed_resource({"links": []})
+
+    def test_deserialize_provider_str(self):
+        """provider='quark' (str) → LinkProvider.QUARK."""
+        data = {
+            "title": "T",
+            "raw_title": "T",
+            "links": [
+                {"provider": "quark", "original_text": "t"},
+            ],
+        }
+        restored = deserialize_parsed_resource(data)
+        assert restored.links[0].provider == LinkProvider.QUARK
+
+    def test_deserialize_none_metadata(self):
+        """metadata=None → restored ParsedResource.metadata is None."""
+        data = {
+            "title": "T",
+            "raw_title": "T",
+            "metadata": None,
+        }
+        restored = deserialize_parsed_resource(data)
+        assert restored.metadata is None
 
 
 # ========================================================================
