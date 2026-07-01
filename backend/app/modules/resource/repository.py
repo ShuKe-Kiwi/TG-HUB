@@ -1,6 +1,11 @@
-"""Minimal persistence operations for the Resource Registry."""
+"""Minimal persistence operations for the Resource Registry.
 
-from sqlalchemy import select
+P4-B additions:
+- get_or_create methods on ResourceLinkRepository and ResourceSourceRepository
+- count_sources on ResourceSourceRepository
+"""
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.resource.model import (
@@ -82,6 +87,36 @@ class ResourceLinkRepository:
         await self.session.refresh(link)
         return link
 
+    async def get_or_create(
+        self,
+        resource_id: int,
+        provider: str,
+        url_hash: str,
+        **fields: object,
+    ) -> tuple[ResourceLink, bool]:
+        """SELECT-first get_or_create.
+
+        Returns (existing_link, False) if (resource_id, provider, url_hash) exists,
+        otherwise (new_link, True).
+
+        Uses the unique constraint (resource_id, provider, url_hash) as the
+        identity check — no IntegrityError risk.
+        """
+        existing = await self.get_by_identity(resource_id, provider, url_hash)
+        if existing is not None:
+            return existing, False
+
+        link = ResourceLink(
+            resource_id=resource_id,
+            provider=provider,
+            url_hash=url_hash,
+            **fields,
+        )
+        self.session.add(link)
+        await self.session.flush()
+        await self.session.refresh(link)
+        return link, True
+
 
 class ResourceSourceRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -108,3 +143,40 @@ class ResourceSourceRepository:
         await self.session.flush()
         await self.session.refresh(source)
         return source
+
+    async def get_or_create(
+        self,
+        resource_id: int,
+        raw_message_id: int,
+        **fields: object,
+    ) -> tuple[ResourceSource, bool]:
+        """SELECT-first get_or_create for ResourceSource.
+
+        Returns (existing_source, False) if (resource_id, raw_message_id) exists,
+        otherwise (new_source, True).
+
+        Never raises IntegrityError — safe for repeated calls.
+        """
+        existing = await self.get_by_identity(resource_id, raw_message_id)
+        if existing is not None:
+            return existing, False
+
+        source = ResourceSource(
+            resource_id=resource_id,
+            raw_message_id=raw_message_id,
+            **fields,
+        )
+        self.session.add(source)
+        await self.session.flush()
+        await self.session.refresh(source)
+        return source, True
+
+    async def count_by_resource(self, resource_id: int) -> int:
+        """Actual COUNT of ResourceSource records for a given Resource."""
+        result = await self.session.execute(
+            select(func.count(ResourceSource.id)).where(
+                ResourceSource.resource_id == resource_id,
+            )
+        )
+        count: int = result.scalar_one()
+        return count

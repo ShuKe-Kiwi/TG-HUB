@@ -16,8 +16,97 @@
 | P3-A | Normalizer + Fingerprint 纯函数 | ✅ 完成 | 48/48 |
 | P3-B | Parser + Normalizer 纯函数链路联调 | ✅ 完成 | 29/29 |
 | P4-A | Resource Registry 模型 + Repository | ✅ 完成 | 6/6 |
-| P4-B | Dedup + Merge 业务流程 | ⏳ 待开始 | — |
+| P4-B | Dedup / Merge Service | ✅ 完成 | 17/17 |
 | P5 | EventBus + Bot | ⏳ 待开始 | — |
+
+---
+
+## P4-B 详细记录
+
+### 完成日期
+2026-07-01
+
+### 实现内容
+
+**DedupService** — 核心去重归并服务：
+- 输入：`NormalizedResource` + `ParsedResource` + `raw_message_id` + `channel_id`
+- 输出：`DedupResult`（resource_id, work_id, is_new, matched_reason, source_count, created_link_count, created_source）
+- Create Path：resource_key miss → 新建 Work（如不存在）+ Resource + ResourceLink + ResourceSource
+- Merge Path：resource_key hit → 新增 ResourceLink（如不存在）+ ResourceSource（如不存在），重算 source_count
+
+**架构对齐：**
+- `Work.type` = `normalized.content_type`（drama / movie / variety / anime / other）
+- `Resource.resource_type` = `normalized.episode_kind`（single_episode / episode_range / full / unknown）
+- `ResourceSource.match_type` = `"title_episode"`（P4-B 统一定义）
+- `provider` 入库前统一转换为 `str`（`"quark"` 而非 `Quark` 枚举）
+
+**8 条约束全部落实：**
+
+| # | 约束 | 实现 |
+|---|------|------|
+| 1 | 统一事务 | 所有操作在 one AsyncSession 内 flush，commit 由调用方控制 |
+| 2 | source_count 重算 | `SELECT COUNT(*) FROM resource_sources WHERE resource_id=?`，不盲+1 |
+| 3 | ResourceSource 幂等 | `get_or_create()` SELECT-first，重复调用返回 existing，不抛异常 |
+| 4 | url_hash 稳定 | `sha256(url.strip())` / `password.strip()` / `original_text.strip()` |
+| 5 | provider 转 str | 入库前 `_ensure_provider_str()` 统一转换 |
+| 6 | Work 存在但 Resource 新 | Create Path 先查 `work_key`，存在则复用，不新建 Work |
+| 7 | created_link_count / created_source | 重复调用时均为 0 / False |
+| 8 | is_new = 新建 Resource | `is_new=True` 表示新建 Resource，与 Work 无关 |
+
+**5 个修正点全部落实：**
+
+| # | 修正点 | 实现 |
+|---|--------|------|
+| 1 | Resource.resource_type | = `episode_kind`，非 `content_type` |
+| 2 | match_type | 统一 `"title_episode"`，非 `"exact"` |
+| 3 | serialize_parsed_resource | 专用函数处理 Enum→str，不依赖 `.model_dump()` |
+| 4 | Create Path 也用 get_or_create | Create/Merge 路径统一使用 `get_or_create` |
+| 5 | created_source 类型 | `bool`，非 int |
+
+### 测试覆盖
+
+| 测试 | 验收项 |
+|------|--------|
+| test_create_path_new_work_and_resource | resource_key miss → 新建 Work + Resource，type/knd 正确 |
+| test_create_path_existing_work | Work 已存在，Resource 新建 → 不复写 Work |
+| test_merge_path | resource_key hit → is_new=False, matched_reason 含 "hit" |
+| test_link_dedup | 相同链接重复调用 → created_link_count=0, 表 count=1 |
+| test_source_tracking | ResourceSource 含 raw_message_id / channel_id / parsed_snapshot |
+| test_source_idempotent | 相同 raw_message_id 重复 → created_source=False |
+| test_source_count_recalc | 2 个唯一 source → count=2, 重复调用不 +1 |
+| test_matched_reason_readable | 含 "resource_key miss/hit" + resource_key 值 |
+| test_power_idempotent | 完全相同的输入 3 次 → 记录数不变 |
+| test_provider_stored_as_string | DB 存 "quark" 非枚举 |
+| test_resource_type_is_episode_kind | Resource.resource_type = single_episode, Work.type = drama |
+| test_multi_link_create | 2 个链接 → created=2, 重复 → created=0 |
+| test_xunlei_command_link | password 作为 hash base, 重复幂等 |
+| test_serialize_* | 序列化正确性、JSON 兼容、None metadata、空 links |
+
+**P4-B 合计：17 测试，全部通过**
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `backend/app/modules/resource/schema.py` | DedupResult DTO |
+| `backend/app/modules/resource/service.py` | DedupService（Dedup / Merge 核心逻辑） |
+| `backend/tests/resource/test_dedup_service.py` | P4-B 测试（17 条） |
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/app/modules/resource/repository.py` | 增加 `get_or_create` + `count_by_resource` 方法 |
+| `docs/IMPLEMENTATION_STATUS.md` | 本文件 |
+
+### 未做内容（边界确认）
+
+- ❌ 未接 ParserPipeline 主链路
+- ❌ 未批量处理 RawMessage.parsed_data
+- ❌ 未实现 EventBus / Bot / Transfer
+- ❌ 未实现模糊匹配 / AI 判断
+- ❌ 未修改 ARCHITECTURE.md 架构内容
+- ❌ 未修改 model.py / dto.py / normalizer 模块
 
 ---
 
@@ -43,7 +132,7 @@
 - `pg_constraint` 确认四个命名约束真实存在
 - `tg_hub_test` 完成 Alembic `upgrade head` / `check` / `downgrade base`
 
-**P4-A 合计：6 测试，全部通过；全量合计：181 测试，全部通过**
+**P4-A 合计：6 测试，全部通过**
 
 ### 边界确认
 
@@ -75,7 +164,7 @@
 - 6 个无效输入不生成 ParsedResource、NormalizedResource 或 key
 - 3 个代表性 fixture 的 resource_key / episode_key 精确值
 
-**P3-B 合计：29 测试，全部通过；Normalizer 合计：77 测试；全量合计：175 测试**
+**P3-B 合计：29 测试，全部通过；Normalizer 合计：77 测试**
 
 ### 边界确认
 
@@ -118,7 +207,7 @@
 - SHA-256 稳定性与身份字段差异
 - 输入不变性和输出不可变性
 
-**P3-A 合计：48 测试，全部通过；全量合计：146 测试，全部通过**
+**P3-A 合计：48 测试，全部通过**
 
 ### 边界确认
 
@@ -154,7 +243,7 @@
 - 失败后重试成功，次数递增并清除旧错误
 - RawMessage 不存在时抛出 `LookupError`
 
-**P2-C 合计：5 测试，全部通过；全量合计：98 测试，全部通过**
+**P2-C 合计：5 测试，全部通过**
 
 ### 边界确认
 
@@ -201,7 +290,7 @@
 | TestPipelineIntegration | 20 | 20 条 fixture 全字段断言 |
 | TestPipelineBoundary | 6 | 空文本、纯空白、无链接、纯链接无标题、纯提取码、None 输入 |
 
-**P2-B 合计：72 测试，全部通过；Parser 合计：86 测试，全部通过**
+**P2-B 合计：72 测试，全部通过；Parser 合计：86 测试**
 
 ### 新增文件
 
