@@ -14,8 +14,43 @@
 | P2-B | Parser Pipeline 完整实现 | ✅ 完成 | 72/72 |
 | P2-C | Parser 结果写回 + 失败状态记录 | ✅ 完成 | 5/5 |
 | P3-A | Normalizer + Fingerprint 纯函数 | ✅ 完成 | 48/48 |
+| P3-B | Parser + Normalizer 纯函数链路联调 | ✅ 完成 | 29/29 |
 | P4 | Dedup + Merge + ResourceSource | ⏳ 待开始 | — |
 | P5 | EventBus + Bot | ⏳ 待开始 | — |
+
+---
+
+## P3-B 详细记录
+
+### 完成日期
+2026-07-01
+
+### 实现内容
+
+- 仅新增测试层 Parser → Normalizer 联调验证，生产代码零修改
+- 20 条 fixture 均执行 Raw Text → ParsedResource → NormalizedResource
+- 每条 fixture 重复执行完整链路，校验归一化结果和四类身份值稳定
+- 无效输入在 Parser 阶段返回空列表，不调用 Normalizer 生成假 key
+
+### 测试覆盖
+
+- 20 条 fixture 的 Parser 输出可被 Normalizer 正常消费
+- work_key / resource_key / episode_key / content_fingerprint 重复执行稳定
+- single_episode 才生成 episode_key，其余类型保持 None
+- 6 个无效输入不生成 ParsedResource、NormalizedResource 或 key
+- 3 个代表性 fixture 的 resource_key / episode_key 精确值
+
+**P3-B 合计：29 测试，全部通过；Normalizer 合计：77 测试；全量合计：175 测试**
+
+### 边界确认
+
+- ❌ 未修改 Parser / Normalizer 生产逻辑
+- ❌ 未创建或修改数据库表
+- ❌ 未写入数据库
+- ❌ 未创建 Work / Resource / ResourceLink / ResourceSource
+- ❌ 未实现 Dedup / Merge
+- ❌ 未实现 EventBus / Bot / Transfer
+- ❌ 未进入 P4
 
 ---
 
