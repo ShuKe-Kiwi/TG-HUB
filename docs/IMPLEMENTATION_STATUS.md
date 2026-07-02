@@ -20,6 +20,39 @@
 | P5-A | 事件契约 + InMemory EventBus | ✅ 完成 | 8/8 |
 | P5-B | Commit 后发布资源事件 | ✅ 完成 | 6/6 |
 | P5-C | Resource 查询 ViewModel | ✅ 完成 | 14/14 |
+| P5-D | Telegram Bot 查询与通知适配器 | ✅ 完成 | 29/29 |
+
+---
+
+## P5-D 详细记录
+
+### 完成日期
+2026-07-02
+
+### 实现内容
+
+- 新增仅保留 update/message/chat ID 与 text 的 Telegram 输入 DTO
+- 新增注入式 `BotTransport` 与 `TelegramBotTransport`
+- Token 普通构造函数显式注入，`from_env()` 只读取 `TELEGRAM_BOT_TOKEN`
+- 新增 `/latest`、`/search`、`/resource`、`/help` 命令处理
+- 新增 ResourceCreated / ResourceMerged 通知 handler
+- HTML 统一由 formatter 生成，动态字段全部转义
+- href 仅允许具有 host 的 HTTP / HTTPS URL
+- 未授权 chat 静默返回，不查询也不发送
+- 测试仅使用内存 FakeBotTransport，并封锁真实 HTTP
+
+**P5-D 合计：29 测试，全部通过**
+
+### 边界确认
+
+- ❌ 未新增 FastAPI router / webhook route
+- ❌ 未修改 main.py / lifespan
+- ❌ 未调用或提供 setWebhook
+- ❌ 未新增 User / Subscription / Transfer
+- ❌ 未接 RawMessageService / DedupService
+- ❌ 未实现 Bot 状态或数据库写入
+- ❌ 未实现 Outbox / Redis / Kafka
+- ❌ 未进入 P5-E
 
 ---
 
