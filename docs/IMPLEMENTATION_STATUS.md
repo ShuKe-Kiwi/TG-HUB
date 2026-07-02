@@ -21,6 +21,37 @@
 | P5-B | Commit 后发布资源事件 | ✅ 完成 | 6/6 |
 | P5-C | Resource 查询 ViewModel | ✅ 完成 | 14/14 |
 | P5-D | Telegram Bot 查询与通知适配器 | ✅ 完成 | 29/29 |
+| P5-E | 应用装配与 MVP-B E2E 验收 | ✅ 完成 | 12/12 |
+
+---
+
+## P5-E 详细记录
+
+### 完成日期
+2026-07-02
+
+### 实现内容
+
+- `main.py` 提供兼容既有导入的 `create_app()` 与全局 `app`
+- lifespan 始终创建并暴露 `app.state.event_bus`
+- Telegram 配置有效时注册 ResourceCreated / ResourceMerged 通知
+- 每次通知使用独立短生命周期 Session 与 ResourceQueryService
+- 新增 `/telegram/webhook`，secret 校验先于 body 与 Session
+- 缺少 token / secret 或 chat ID 非法时安全禁用 Telegram
+- `/health` 在 Telegram 禁用时保持正常
+- FakeBotTransport E2E 锁定命令、通知、幂等与失败隔离闭环
+
+**P5-E 合计：12 测试，全部通过**
+
+### 边界确认
+
+- ❌ 未注册 RawMessageFailed
+- ❌ 未调用 setWebhook 或真实 Telegram API
+- ❌ 未修改 Parser / Normalizer / Dedup / Query / Bot 业务逻辑
+- ❌ 未新增 User / Subscription / Transfer
+- ❌ 未新增数据库表、migration 或 index
+- ❌ 未实现 Outbox / Redis / Kafka / 定时任务 / AI 查询
+- ❌ 未进入 P6
 
 ---
 

@@ -25,5 +25,10 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "DEBUG"
 
+    # Telegram
+    TELEGRAM_WEBHOOK_SECRET: str = ""
+    TELEGRAM_ALLOWED_CHAT_IDS: str = ""
+    TELEGRAM_NOTIFY_CHAT_IDS: str = ""
+
 
 settings = Settings()
