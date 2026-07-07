@@ -14,14 +14,20 @@ from app.modules.monitor.filter import (
 from app.modules.monitor.schema import (
     IncomingMessage,
 )
+from app.modules.monitor.source_channels import (
+    SourceChannelPrecheckResult,
+    precheck_source_channels,
+)
 
 __all__ = [
     "IncomingMessage",
     "SourceChannelConfig",
+    "SourceChannelPrecheckResult",
     "WatchTitleConfig",
     "WatchlistConfig",
     "WatchlistMatchResult",
     "filter_message",
     "load_watchlist",
     "normalize_watch_text",
+    "precheck_source_channels",
 ]

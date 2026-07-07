@@ -50,6 +50,7 @@ class WatchTitleConfig(BaseModel):
     def normalize_aliases(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item.strip()]
 
+
 class WatchlistConfig(BaseModel):
     """Configured sources and watched titles."""
 
