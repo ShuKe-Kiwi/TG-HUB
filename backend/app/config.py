@@ -30,5 +30,8 @@ class Settings(BaseSettings):
     TELEGRAM_ALLOWED_CHAT_IDS: str = ""
     TELEGRAM_NOTIFY_CHAT_IDS: str = ""
 
+    # Monitor configuration
+    WATCHLIST_PATH: Path = Path("~/.tg-hub/watchlist.json")
+
 
 settings = Settings()
