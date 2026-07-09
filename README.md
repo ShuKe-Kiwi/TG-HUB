@@ -23,7 +23,7 @@ split so dry-run validation does not silently become a production monitor.
 | P6-2C-0B controlled channel resolution | Implemented |
 | P6-2C-1 listener dry-run design | Locked |
 | P6-2C-2 short-window listener dry-run | Implemented |
-| P6-2D long-running monitor | Design locked, not implemented |
+| P6-2D long-running monitor runtime | Lifecycle implemented, production ingest not enabled |
 
 See:
 
@@ -183,7 +183,7 @@ It explicitly does not:
 
 ### P6-2D
 
-P6-2D is currently a design-locked production runtime contract for:
+P6-2D implements the long-running monitor runtime lifecycle for:
 
 - reconnect
 - heartbeat
@@ -192,7 +192,8 @@ P6-2D is currently a design-locked production runtime contract for:
 - graceful shutdown
 - production lifecycle
 
-The long-running monitor implementation has not started.
+It still does not enable production ingest: no database writes, parser,
+normalizer, dedup, bot notification, media download, or history backfill.
 
 ## Useful Verification Commands
 

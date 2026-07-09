@@ -1,7 +1,7 @@
 # TG-HUB 实施进度
 
-> 架构基准：docs/ARCHITECTURE.md V2.1-final
-> 最后更新：2026-07-02
+> 架构基准：docs/ARCHITECTURE.md V2.2
+> 最后更新：2026-07-09
 
 ---
 
@@ -22,6 +22,57 @@
 | P5-C | Resource 查询 ViewModel | ✅ 完成 | 14/14 |
 | P5-D | Telegram Bot 查询与通知适配器 | ✅ 完成 | 29/29 |
 | P5-E | 应用装配与 MVP-B E2E 验收 | ✅ 完成 | 12/12 |
+| P6-2D | 长期 monitor runtime 生命周期 | ✅ 第一版完成 | 6/6 |
+
+---
+
+## P6-2D 详细记录
+
+### 完成日期
+2026-07-09
+
+### 实现内容
+
+- 新增 `MonitorRuntime` 作为唯一 runtime owner
+- 显式有限状态机：`created -> starting -> preflight -> resolving_channels -> connecting -> registering_handler -> listening -> draining -> stopped`
+- 只维护一个 Telethon-compatible client
+- 只注册一个 `NewMessage` handler，覆盖全部 resolved channel ids
+- 新增 `MonitorRuntimeConfig`，接入 P6-2D runtime 配置项
+- 新增 heartbeat payload，包含 liveness / readiness、运行计数、错误码和边界 no flags
+- 新增 graceful shutdown：stop、drain、remove handler、disconnect、final summary
+- 新增 reconnect/backoff 路径：disconnect 后先移除旧 handler，再连接并重新注册单 handler
+- 新增稳定错误报告 `MonitorRuntimeError`
+- 新增脱敏 final summary `MonitorRuntimeSummary`
+
+**P6-2D 合计：6 测试，全部通过**
+
+### 边界确认
+
+- ✅ Runtime 收到消息后只执行 `IncomingMessage -> watchlist filter -> counters/heartbeat/summary`
+- ✅ 不访问数据库
+- ✅ 不创建 `AsyncSession`
+- ✅ 不调用 `RawMessageService`
+- ✅ 不运行 Parser / Normalizer / Dedup
+- ✅ 不发送 Bot 通知
+- ✅ 不下载媒体
+- ✅ 不回溯历史消息
+- ✅ 不持久化 raw event
+- ❌ 未实现生产入库
+- ❌ 未接 P6-2E ingestion/application boundary
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `backend/app/modules/monitor/runtime.py` | P6-2D 长期 monitor runtime 生命周期 |
+| `backend/tests/monitor/test_runtime.py` | P6-2D 生命周期测试 |
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/app/config.py` | 增加 P6-2D runtime 配置项 |
+| `backend/app/modules/monitor/__init__.py` | 导出 runtime 类型与入口 |
 
 ---
 

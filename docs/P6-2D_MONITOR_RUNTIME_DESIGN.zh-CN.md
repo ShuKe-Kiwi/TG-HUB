@@ -1,6 +1,6 @@
 # P6-2D Monitor Runtime 设计
 
-> 状态：设计已锁定
+> 状态：设计已锁定；第一版 runtime 生命周期已实现
 > 范围：长期运行 Telegram monitor 的运行时契约
 > 不包含：实现代码、数据库入库、Parser、Dedup、Bot 通知
 
@@ -11,15 +11,15 @@
 | P6-2C-1 | 监听 dry-run 设计 | 已完成 |
 | P6-2C-2 | 短时真实监听 dry-run | 已完成 |
 | P6-2D | 长期 monitor runtime 设计 | 设计已锁定 |
-| P6-2D implementation | 长期 monitor 代码实现 | 未开始 |
+| P6-2D implementation | 长期 monitor runtime 生命周期代码实现 | 第一版已完成 |
 
 P6-2D 设计只能回答：
 
 > 长期运行的 monitor 应该如何启动、重连、上报心跳、从错误中恢复、暴露可观测性，并安全停机？
 
-P6-2D 设计不能回答：
+本文档本身不能回答：
 
-> 长期运行的 monitor 已经实现，或已经具备生产可用性。
+> 长期运行的 monitor 已经具备生产入库能力，或已经接通 Parser / Dedup / Bot。
 
 ## 固定边界
 
@@ -671,4 +671,4 @@ P6-2D 设计完成条件：
 - 测试矩阵已定义。
 - Non-goals 保持明确。
 
-本文档不实现长期运行 monitor。
+本文档是长期运行 monitor runtime 的设计基线；第一版实现位于 `backend/app/modules/monitor/runtime.py`。实现仍不接入数据库、Parser、Normalizer、Dedup 或 Bot。

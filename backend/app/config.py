@@ -35,6 +35,12 @@ class Settings(BaseSettings):
 
     # Monitor configuration
     WATCHLIST_PATH: Path = Path("~/.tg-hub/watchlist.json")
+    MONITOR_HEARTBEAT_INTERVAL_SECONDS: int = 30
+    MONITOR_RECONNECT_INITIAL_DELAY_SECONDS: int = 1
+    MONITOR_RECONNECT_MAX_DELAY_SECONDS: int = 60
+    MONITOR_RECONNECT_STABLE_RESET_SECONDS: int = 300
+    MONITOR_DRAIN_TIMEOUT_SECONDS: int = 10
+    MONITOR_MAX_INFLIGHT_EVENTS: int = 100
 
 
 settings = Settings()
