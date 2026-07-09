@@ -1,5 +1,7 @@
 # P6-2C-1 Monitor Dry-Run Design
 
+[中文版本](P6-2C-1_MONITOR_DRY_RUN_DESIGN.zh-CN.md)
+
 > Status: design locked
 > Scope: short-window Telegram `NewMessage` dry-run design only
 > Not in scope: production monitor, database ingest, parser, dedup, bot notification
