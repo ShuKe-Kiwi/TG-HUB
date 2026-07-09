@@ -1,7 +1,7 @@
-# tg-hub 架构约束文档 V2.1-final
+# tg-hub 架构约束文档 V2.2
 
-> 定稿日期：2026-07-01
-> 状态：**已确认，待实现**
+> 更新日期：2026-07-09
+> 状态：**已确认，按阶段持续校准**
 > 原则：概念正确 → 落库清晰 → 状态流转无歧义
 
 ---
@@ -18,6 +18,7 @@
 8. [MVP 范围与验收标准](#8-mvp-范围与验收标准)
 9. [实施顺序](#9-实施顺序)
 10. [设计约束清单](#10-设计约束清单)
+11. [P6 后续阶段边界](#11-p6-后续阶段边界)
 
 ---
 
@@ -609,8 +610,8 @@ MVP 不落表，不实现。
 
 ```python
 # MVP 事件
-ResourceCreated    → Notify 模块推送新资源
-ResourceMerged     → Notify 模块推送归并通知
+ResourceCreated    → Bot/Notification 适配层推送新资源
+ResourceMerged     → Bot/Notification 适配层推送归并通知
 RawMessageFailed   → 记录日志 + 告警
 ```
 
@@ -621,7 +622,7 @@ DB Transaction COMMIT  ← 真实状态源
   ↓
 publish in-memory event (best-effort)
   ↓
-Notify handler 执行
+Bot/Notification handler 执行
   ↓
 失败 → 记日志，不影响数据
 ```
@@ -667,6 +668,8 @@ CREATE TABLE outbox_events (
 
 ## 7. 目录结构
 
+本节以当前实现组织为准，修正早期草图中的目录漂移。当前不为了匹配旧文档强制搬迁代码。
+
 ```
 tg-hub/
 ├── backend/
@@ -689,27 +692,40 @@ tg-hub/
 │   │   │   │   └── service.py
 │   │   │   │
 │   │   │   ├── parser/                # 解析流水线
-│   │   │   │   ├── pipeline.py        # Pipeline 编排
 │   │   │   │   ├── dto.py             # ParsedResource / ParsedLink / ParsedMetadata
-│   │   │   │   ├── stages/
-│   │   │   │   │   ├── preprocessor.py
-│   │   │   │   │   ├── rule_parser.py
-│   │   │   │   │   ├── provider_detector.py
-│   │   │   │   │   ├── metadata_extractor.py
-│   │   │   │   │   └── postprocessor.py
-│   │   │   │   ├── rules/             # 规则集 (YAML/JSON)
-│   │   │   │   └── special/           # 特殊解析器（极少）
-│   │   │   │       └── base.py        # SpecialParser ABC
+│   │   │   │   ├── pipeline/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   └── core.py        # 当前 Pipeline 编排实现
+│   │   │   │   └── rules/             # 规则集
+│   │   │   │
+│   │   │   ├── normalizer/            # 标题归一化与指纹
+│   │   │   │   ├── core.py
+│   │   │   │   └── fingerprint.py
 │   │   │   │
 │   │   │   ├── resource/              # 统一资源中心
 │   │   │   │   ├── model.py           # Work, Resource, ResourceLink, ResourceSource
 │   │   │   │   ├── repository.py
 │   │   │   │   ├── service.py
-│   │   │   │   ├── dedup.py           # 指纹 + 去重 + 归并
-│   │   │   │   ├── normalizer.py      # 标题归一化
-│   │   │   │   ├── fingerprint.py     # 指纹生成
-│   │   │   │   ├── api.py
+│   │   │   │   ├── query_service.py   # 查询/Bot 展示数据读取
+│   │   │   │   ├── query_schema.py    # 查询 DTO
 │   │   │   │   └── schema.py
+│   │   │   │
+│   │   │   ├── bot/                   # Bot 查询与通知适配
+│   │   │   │   ├── formatter.py
+│   │   │   │   ├── handlers.py
+│   │   │   │   ├── router.py
+│   │   │   │   ├── schema.py          # Bot 展示 DTO/ViewModel
+│   │   │   │   └── transport.py
+│   │   │   │
+│   │   │   ├── monitor/               # Telegram 传输适配层
+│   │   │   │   ├── config.py          # watchlist 配置读取
+│   │   │   │   ├── schema.py          # IncomingMessage DTO
+│   │   │   │   ├── filter.py          # watch_titles 纯过滤
+│   │   │   │   ├── source_channels.py # source_channels 引用分类预检
+│   │   │   │   ├── resolver.py        # 受控解析编排
+│   │   │   │   ├── telethon_resolver.py
+│   │   │   │   ├── runtime_preflight.py
+│   │   │   │   └── listener_dry_run.py
 │   │   │   │
 │   │   │   ├── transfer/              # 转存（后期）
 │   │   │   │   ├── model.py
@@ -725,11 +741,6 @@ tg-hub/
 │   │   │   │   ├── service.py
 │   │   │   │   └── api.py
 │   │   │   │
-│   │   │   ├── notify/                # 通知
-│   │   │   │   ├── service.py
-│   │   │   │   ├── templates.py
-│   │   │   │   └── viewmodel.py       # Bot 展示模型（不绑领域模型）
-│   │   │   │
 │   │   │   └── user/                  # 用户（后期）
 │   │   │       ├── model.py
 │   │   │       ├── service.py
@@ -738,12 +749,7 @@ tg-hub/
 │   │   ├── infra/                     # 基础设施
 │   │   │   ├── eventbus.py            # 事件总线
 │   │   │   ├── events.py              # 事件定义
-│   │   │   ├── telegram_client.py     # Telethon 封装
 │   │   │   └── logger.py
-│   │   │
-│   │   └── monitor/                   # 监控引擎（主链路编排）
-│   │       ├── engine.py              # 主循环
-│   │       └── handler.py             # 消息接入
 │   │
 │   ├── alembic/                       # 数据库迁移
 │   ├── tests/
@@ -763,7 +769,8 @@ tg-hub/
 Bot 展示使用 ViewModel，**不直接使用 ORM Model**：
 
 ```python
-# modules/notify/viewmodel.py
+# modules/bot/schema.py
+# 或后续独立 notification/viewmodel.py
 
 @dataclass
 class ResourceListItem:
@@ -801,6 +808,8 @@ class SourceView:
     match_type: str
     confidence: float
 ```
+
+当前实现中，资源查询读取能力位于 `modules/resource/query_service.py` 与 `modules/resource/query_schema.py`，Bot 层负责展示格式、命令路由和传输适配。Bot 不应绕过查询服务直接暴露 ORM。
 
 ---
 
@@ -864,6 +873,10 @@ class SourceView:
 | **P3** | Normalizer + Fingerprint | 归一化输出稳定 |
 | **P4** | Dedup + Merge + ResourceSource | 跨频道同资源归并 |
 | **P5** | EventBus + Bot | 通知 + 查询可用 |
+| **P6-2D** | 长期 monitor runtime | 仅生命周期：连接、重连、心跳、退出、观测 |
+| **P6-2E** | Monitor → RawMessage ingestion boundary | 传输适配层只交付 IncomingMessage |
+| **P6-2F** | RawMessage → Parser / Normalizer / Dedup 编排 | 主处理链路由应用服务承接 |
+| **P6-2G** | EventBus / Bot 查询通知接入 | 事件与通知接入，不反向污染 Monitor |
 
 ### P1 详细验收
 
@@ -917,4 +930,84 @@ class SourceView:
 | 10 | TransferTask 后置 | MVP 不落表 |
 | 11 | MVP 两阶段 | MVP-A 验证解析去重，MVP-B 做 Bot |
 | 12 | 三层资源模型 | Work → Resource → ResourceLink，MVP 也建 Work |
+| 13 | Monitor 是传输适配层 | 只构造 IncomingMessage，不直接承担 DB/Parser/Normalizer/Dedup/Bot 编排 |
+
+---
+
+## 11. P6 后续阶段边界
+
+### 11.1 当前架构定性
+
+当前项目不是架构偏离，而是主架构尚未完整接通。P6 仍处于受控验证阶段，已有的 preflight、resolver、短时 listener dry-run 都不应被解释为生产监听链路已经完成。
+
+目录组织与早期草图存在轻微漂移，但业务边界暂未越界。后续以当前 `app/modules/...` 结构为准更新文档，不为了形式一致强制搬迁代码。
+
+### 11.2 Monitor 固定职责
+
+Monitor runtime 固定为传输适配层：
+
 ```
+Monitor runtime
+  -> IncomingMessage
+  -> ingestion/application boundary
+```
+
+Monitor 不直接承担数据库、解析、归一化、去重或通知编排。它的职责是连接 Telegram、维护运行生命周期、接收消息、构造统一入口 DTO，并把 DTO 交给应用边界。
+
+应用服务负责主业务链路：
+
+```
+Application service
+  -> RawMessageService.ingest()
+  -> Parser
+  -> Normalizer
+  -> Dedup
+  -> EventBus
+```
+
+### 11.3 禁止耦合
+
+明确禁止形成以下调用关系：
+
+- `monitor/runtime.py` 直接访问 DB
+- `monitor/runtime.py` 直接调用 Parser
+- `monitor/runtime.py` 直接调用 Normalizer
+- `monitor/runtime.py` 直接调用 Dedup
+- `monitor/runtime.py` 直接发送 Bot 通知
+
+### 11.4 阶段拆分
+
+| 阶段 | 范围 | 明确不做 |
+|------|------|----------|
+| **P6-2D** | 长期 monitor runtime，仅生命周期 | 不接 DB / Parser / Normalizer / Dedup / Bot |
+| **P6-2E** | Monitor → RawMessage ingestion boundary | 不扩展解析、去重、通知 |
+| **P6-2F** | RawMessage → Parser / Normalizer / Dedup 编排 | 不把业务编排塞回 Monitor |
+| **P6-2G** | EventBus / Bot 查询通知接入 | 不让 Bot 或事件处理反向依赖 Monitor runtime |
+
+### 11.5 P6-2D 允许范围
+
+P6-2D 只处理长期运行生命周期：
+
+- client connect / disconnect
+- handler 注册与移除
+- 重连策略
+- 心跳与健康状态
+- shutdown signal
+- 运行状态观测
+- 异常隔离
+- bounded retry / backoff
+- 配置重载策略是否存在
+
+P6-2D 不包含：
+
+- `RawMessageService.ingest()`
+- DB transaction
+- Parser / Normalizer / Dedup
+- EventBus publish
+- Bot notification
+- history backfill
+- 媒体下载
+
+### 11.6 后续评审硬边界
+
+后续 P6-2D、P6-2E 评审时，应优先检查是否出现长期 runtime 与 ingestion pipeline 混合。一旦 Monitor 直接接入 DB、Parser、Normalizer、Dedup 或 Bot，即视为越过阶段边界，需要拆回应用服务层。
