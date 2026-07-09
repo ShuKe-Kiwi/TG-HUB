@@ -1,9 +1,12 @@
 """RawMessage Pydantic schemas (DTOs)."""
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
+
+from app.modules.rawmessage.model import RawMessage
 
 
 class RawMessageCreate(BaseModel):
@@ -13,6 +16,27 @@ class RawMessageCreate(BaseModel):
     raw_media_refs: list[dict] | None = None
     raw_payload: dict | None = None
     published_at: datetime | None = None
+
+
+@dataclass
+class RawMessageIngestResult:
+    """Result of idempotent RawMessage ingest."""
+
+    raw_message: RawMessage
+    disposition: Literal["stored", "duplicate"]
+
+    def __getattr__(self, name: str) -> Any:
+        """Compatibility proxy for existing call sites that use RawMessage fields."""
+        return getattr(self.raw_message, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if (
+            name in {"raw_message", "disposition"}
+            or "raw_message" not in self.__dict__
+        ):
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.raw_message, name, value)
 
 
 class RawMessageRead(BaseModel):

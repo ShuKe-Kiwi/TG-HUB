@@ -123,7 +123,7 @@ RawMessageCreate
 当前幂等服务：
 
 ```text
-RawMessageService.ingest(data: RawMessageCreate) -> RawMessage
+RawMessageService.ingest(data: RawMessageCreate) -> RawMessageIngestResult
 ```
 
 `RawMessageService.ingest()` 已负责：
@@ -136,14 +136,14 @@ RawMessageService.ingest(data: RawMessageCreate) -> RawMessage
 - `content_hash` 计算
 - commit
 
-P6-2E 实现前置条件：
+P6-2E-1 已完成的实现前置条件：
 
 ```text
 RawMessageService.ingest()
-必须能可靠返回 stored / duplicate disposition
+已能可靠返回 stored / duplicate disposition
 ```
 
-建议目标接口：
+当前接口：
 
 ```text
 RawMessageIngestResult
@@ -151,7 +151,7 @@ RawMessageIngestResult
 - disposition: stored | duplicate
 ```
 
-如果当前代码仍只返回 `RawMessage`，应先调整服务接口或新增等价方法，再实现 P6-2E boundary。不得用写入前 precheck 推测 stored / duplicate。
+后续实现 P6-2E boundary 时必须读取 `disposition`，不得用写入前 precheck 推测 stored / duplicate。
 
 ## Application Boundary 形态
 
@@ -339,7 +339,7 @@ raw_message_created: yes/no
 
 ## 幂等判定
 
-当前 `RawMessageService.ingest()` 返回 `RawMessage`，但不直接说明本次是新建还是重复。
+当前 `RawMessageService.ingest()` 返回 `RawMessageIngestResult`，其中 `disposition` 直接说明本次是新建还是重复。
 
 P6-2E 禁止采用写入前 precheck 推测 stored / duplicate：
 
@@ -373,11 +373,11 @@ IngestionBoundary
 -> boundary 根据 disposition 映射 IncomingIngestionResult.status
 ```
 
-因此 P6-2E 实现前置条件是：
+因此 P6-2E boundary 实现前置条件已经满足：
 
 ```text
 RawMessageService.ingest()
-必须可靠返回 stored / duplicate disposition
+可靠返回 stored / duplicate disposition
 ```
 
 结果必须来自唯一约束或原子写入结果，而不是写入前推测。并发提交相同消息时必须保证：

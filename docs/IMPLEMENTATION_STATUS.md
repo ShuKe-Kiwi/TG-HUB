@@ -23,6 +23,35 @@
 | P5-D | Telegram Bot 查询与通知适配器 | ✅ 完成 | 29/29 |
 | P5-E | 应用装配与 MVP-B E2E 验收 | ✅ 完成 | 12/12 |
 | P6-2D | 长期 monitor runtime 生命周期 | ✅ 第一版完成 | 6/6 |
+| P6-2E-1 | RawMessage ingest disposition 前置改造 | ✅ 完成 | 8/8 |
+
+---
+
+## P6-2E-1 详细记录
+
+### 完成日期
+2026-07-09
+
+### 实现内容
+
+- 新增 `RawMessageIngestResult`
+- `RawMessageService.ingest()` 返回 `raw_message + disposition`
+- 新建消息返回 `disposition=stored`
+- 已存在消息返回 `disposition=duplicate`
+- 并发唯一约束冲突时 rollback 后重新读取胜出记录，并返回 `duplicate`
+- 兼容既有调用点，可继续通过返回值访问 `RawMessage` 字段
+
+**P6-2E-1 合计：8 个 RawMessage ingest 测试，全部通过**
+
+### 边界确认
+
+- ✅ 只改 RawMessage ingest 前置能力
+- ✅ 未实现 `IngestionBoundary.ingest_incoming()`
+- ✅ 未让 Monitor 访问 DB / Repository / RawMessageService
+- ✅ 未接 Parser / Normalizer / Dedup
+- ✅ 未发布 EventBus
+- ✅ 未发送 Bot 通知
+- ✅ 未下载媒体或回溯历史消息
 
 ---
 

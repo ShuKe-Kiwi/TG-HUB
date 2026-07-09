@@ -1,7 +1,7 @@
 """RawMessage service — idempotent ingest per ARCHITECTURE.md V2.1-final §2.2.
 
 Rules:
-1. If (channel_id, tg_message_id) already exists → return existing, no modification.
+1. If (channel_id, tg_message_id) already exists → return duplicate, no modification.
 2. If new → compute content_hash = sha256(raw_text or ""), create with initial states.
 3. content_hash is NOT a unique constraint — it's a regular index for backup dedup only.
 4. raw_text / raw_payload / raw_media_refs must be saved verbatim.
@@ -11,6 +11,7 @@ Rules:
 import hashlib
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.eventbus import EventBus
@@ -24,7 +25,7 @@ from app.modules.parser.pipeline.core import (
 )
 from app.modules.rawmessage.model import RawMessage
 from app.modules.rawmessage.repository import RawMessageRepository
-from app.modules.rawmessage.schema import RawMessageCreate
+from app.modules.rawmessage.schema import RawMessageCreate, RawMessageIngestResult
 from app.modules.resource.schema import DedupResult
 from app.modules.resource.service import DedupService, deserialize_parsed_resource
 
@@ -50,15 +51,17 @@ class RawMessageService:
         self.parser_pipeline = parser_pipeline or ParserPipeline()
         self._dedup_service = dedup_service
 
-    async def ingest(self, data: RawMessageCreate) -> RawMessage:
-        """Idempotent ingest: returns existing or creates new RawMessage.
+    async def ingest(self, data: RawMessageCreate) -> RawMessageIngestResult:
+        """Idempotent ingest: returns stored/duplicate disposition.
 
-        - If (channel_id, tg_message_id) exists → return existing, NO modification.
+        - If (channel_id, tg_message_id) exists → return duplicate, NO modification.
         - If new → create with initial states:
             ingest_status = stored
             parse_status  = parse_pending
             dedup_status  = dedup_pending
             parse_attempts = 0
+        - If a concurrent insert wins the unique constraint race, rollback and
+          return the winning row as duplicate.
         """
         existing = await self.repo.get_by_channel_and_msg_id(
             data.channel_id, data.tg_message_id
@@ -70,7 +73,10 @@ class RawMessageService:
                 data.tg_message_id,
                 existing.id,
             )
-            return existing
+            return RawMessageIngestResult(
+                raw_message=existing,
+                disposition="duplicate",
+            )
 
         content_hash = _compute_content_hash(data.raw_text)
 
@@ -88,15 +94,36 @@ class RawMessageService:
             dedup_status="dedup_pending",
             parse_attempts=0,
         )
-        await self.repo.create(raw_message)
-        await self.session.commit()
+        try:
+            await self.repo.create(raw_message)
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            existing = await self.repo.get_by_channel_and_msg_id(
+                data.channel_id, data.tg_message_id
+            )
+            if existing is None:
+                raise
+            logger.info(
+                "RawMessage channel_id=%s tg_message_id=%s concurrently inserted (id=%s), returning duplicate",
+                data.channel_id,
+                data.tg_message_id,
+                existing.id,
+            )
+            return RawMessageIngestResult(
+                raw_message=existing,
+                disposition="duplicate",
+            )
         logger.info(
             "Ingested RawMessage id=%s channel_id=%s tg_message_id=%s",
             raw_message.id,
             raw_message.channel_id,
             raw_message.tg_message_id,
         )
-        return raw_message
+        return RawMessageIngestResult(
+            raw_message=raw_message,
+            disposition="stored",
+        )
 
     async def get_by_id(self, raw_msg_id: int) -> RawMessage | None:
         return await self.repo.get_by_id(raw_msg_id)

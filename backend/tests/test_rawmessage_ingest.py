@@ -10,10 +10,15 @@
 7. Initial states correct: stored / parse_pending / dedup_pending / parse_attempts=0
 """
 
+import asyncio
+
 import pytest
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.modules.channel.schema import ChannelCreate
 from app.modules.channel.service import ChannelService
+from app.modules.rawmessage.model import RawMessage
 from app.modules.rawmessage.schema import RawMessageCreate
 from app.modules.rawmessage.service import RawMessageService
 
@@ -67,6 +72,8 @@ async def test_create_rawmessage_success(db_session):
         )
     )
 
+    assert msg.disposition == "stored"
+    assert msg.raw_message.id == msg.id
     assert msg.id is not None
     assert msg.channel_id == channel.id
     assert msg.tg_message_id == 1001
@@ -88,12 +95,13 @@ async def test_duplicate_rawmessage_only_one_record(db_session):
             channel_id=channel.id, tg_message_id=2001, raw_text="第一条消息"
         )
     )
-    await msg_svc.ingest(
+    duplicate = await msg_svc.ingest(
         RawMessageCreate(
             channel_id=channel.id, tg_message_id=2001, raw_text="第二条消息-重复"
         )
     )
 
+    assert duplicate.disposition == "duplicate"
     # Verify only one record exists
     existing = await msg_svc.get_by_channel_and_msg_id(channel.id, 2001)
     assert existing is not None
@@ -126,6 +134,8 @@ async def test_duplicate_rawmessage_returns_existing_unmodified(db_session):
         )
     )
 
+    assert first.disposition == "stored"
+    assert second.disposition == "duplicate"
     assert first.id == second.id
     assert second.raw_text == "原始消息内容"  # NOT overwritten
     assert "完全不同的内容" not in second.raw_text
@@ -187,3 +197,46 @@ async def test_rawmessage_initial_states(db_session):
     assert msg.parse_status == "parse_pending"
     assert msg.dedup_status == "dedup_pending"
     assert msg.parse_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_rawmessage_returns_one_stored_rest_duplicate(
+    db_session,
+):
+    """P6-2E prerequisite: concurrent idempotency reports atomic disposition."""
+    channel = await ChannelService(db_session).create_or_get(
+        ChannelCreate(name="并发频道", tg_id=777, tg_username="concurrent_ch")
+    )
+    assert db_session.bind is not None
+    session_factory = async_sessionmaker(
+        db_session.bind,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async def ingest_once(raw_text: str):
+        async with session_factory() as session:
+            return await RawMessageService(session).ingest(
+                RawMessageCreate(
+                    channel_id=channel.id,
+                    tg_message_id=7001,
+                    raw_text=raw_text,
+                )
+            )
+
+    first, second = await asyncio.gather(
+        ingest_once("并发消息 A"),
+        ingest_once("并发消息 B"),
+    )
+
+    dispositions = sorted([first.disposition, second.disposition])
+    assert dispositions == ["duplicate", "stored"]
+    assert first.id == second.id
+
+    count_result = await db_session.execute(
+        select(func.count()).select_from(RawMessage).where(
+            RawMessage.channel_id == channel.id,
+            RawMessage.tg_message_id == 7001,
+        )
+    )
+    assert count_result.scalar_one() == 1
