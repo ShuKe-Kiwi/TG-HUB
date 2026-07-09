@@ -29,12 +29,12 @@ class Settings(BaseSettings):
     TELEGRAM_WEBHOOK_SECRET: str = ""
     TELEGRAM_ALLOWED_CHAT_IDS: str = ""
     TELEGRAM_NOTIFY_CHAT_IDS: str = ""
+    TELEGRAM_SESSION_NAME: str = "~/.tg-hub/telethon"
+    TELEGRAM_API_ID: int | None = None
+    TELEGRAM_API_HASH: str = ""
 
     # Monitor configuration
     WATCHLIST_PATH: Path = Path("~/.tg-hub/watchlist.json")
-    TELETHON_SESSION_PATH: Path = Path("~/.tg-hub/telethon.session")
-    TELETHON_API_ID: int | None = None
-    TELETHON_API_HASH: str = ""
 
 
 settings = Settings()

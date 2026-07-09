@@ -33,10 +33,11 @@ class RuntimePreflightReport(BaseModel):
     watchlist_schema: PreflightStatus
     watchlist_readable: PreflightStatus
     telethon_dependency: PreflightStatus
-    telethon_api_id_configured: PreflightStatus
-    telethon_api_hash_configured: PreflightStatus
-    telethon_session_parent_exists: PreflightStatus
-    telethon_session_parent_writable: PreflightStatus
+    telegram_api_id_configured: PreflightStatus
+    telegram_api_hash_configured: PreflightStatus
+    telegram_session_name_configured: PreflightStatus
+    telegram_session_parent_exists: PreflightStatus
+    telegram_session_parent_writable: PreflightStatus
     enabled_source_channels: int
     numeric_source_channels: int
     resolver_required_source_channels: int
@@ -79,10 +80,11 @@ def _failed_watchlist_report(
     path_writable_probe: PathWritableProbe,
     blockers: list[str],
 ) -> RuntimePreflightReport:
-    session_parent = app_settings.TELETHON_SESSION_PATH.expanduser().parent
+    session_name_configured = bool(app_settings.TELEGRAM_SESSION_NAME.strip())
+    session_parent = Path(app_settings.TELEGRAM_SESSION_NAME).expanduser().parent
     telethon_dependency = telethon_probe()
-    api_id_configured = app_settings.TELETHON_API_ID is not None
-    api_hash_configured = bool(app_settings.TELETHON_API_HASH.strip())
+    api_id_configured = app_settings.TELEGRAM_API_ID is not None
+    api_hash_configured = bool(app_settings.TELEGRAM_API_HASH.strip())
     session_parent_exists = session_parent.exists()
     session_parent_writable = (
         path_writable_probe(session_parent) if session_parent_exists else False
@@ -91,22 +93,25 @@ def _failed_watchlist_report(
     if not telethon_dependency:
         blockers.append("telethon_dependency_missing")
     if not api_id_configured:
-        blockers.append("telethon_api_id_missing")
+        blockers.append("telegram_api_id_missing")
     if not api_hash_configured:
-        blockers.append("telethon_api_hash_missing")
-    if not session_parent_exists:
-        blockers.append("telethon_session_parent_missing")
+        blockers.append("telegram_api_hash_missing")
+    if not session_name_configured:
+        blockers.append("telegram_session_name_missing")
+    elif not session_parent_exists:
+        blockers.append("telegram_session_parent_missing")
     elif not session_parent_writable:
-        blockers.append("telethon_session_parent_not_writable")
+        blockers.append("telegram_session_parent_not_writable")
 
     return RuntimePreflightReport(
         watchlist_schema="fail",
         watchlist_readable="fail",
         telethon_dependency=_status(telethon_dependency),
-        telethon_api_id_configured=_status(api_id_configured),
-        telethon_api_hash_configured=_status(api_hash_configured),
-        telethon_session_parent_exists=_status(session_parent_exists),
-        telethon_session_parent_writable=_status(session_parent_writable),
+        telegram_api_id_configured=_status(api_id_configured),
+        telegram_api_hash_configured=_status(api_hash_configured),
+        telegram_session_name_configured=_status(session_name_configured),
+        telegram_session_parent_exists=_status(session_parent_exists),
+        telegram_session_parent_writable=_status(session_parent_writable),
         enabled_source_channels=0,
         numeric_source_channels=0,
         resolver_required_source_channels=0,
@@ -183,9 +188,14 @@ def build_runtime_preflight_report(
     )
 
     telethon_dependency = resolved_telethon_probe()
-    api_id_configured = resolved_settings.TELETHON_API_ID is not None
-    api_hash_configured = bool(resolved_settings.TELETHON_API_HASH.strip())
-    session_parent = resolved_settings.TELETHON_SESSION_PATH.expanduser().parent
+    api_id_configured = resolved_settings.TELEGRAM_API_ID is not None
+    api_hash_configured = bool(resolved_settings.TELEGRAM_API_HASH.strip())
+    session_name_configured = bool(
+        resolved_settings.TELEGRAM_SESSION_NAME.strip()
+    )
+    session_parent = (
+        Path(resolved_settings.TELEGRAM_SESSION_NAME).expanduser().parent
+    )
     session_parent_exists = session_parent.exists()
     session_parent_writable = (
         resolved_path_writable_probe(session_parent)
@@ -203,23 +213,26 @@ def build_runtime_preflight_report(
         if not telethon_dependency:
             resolved_blockers.append("telethon_dependency_missing")
         if not api_id_configured:
-            resolved_blockers.append("telethon_api_id_missing")
+            resolved_blockers.append("telegram_api_id_missing")
         if not api_hash_configured:
-            resolved_blockers.append("telethon_api_hash_missing")
-        if not session_parent_exists:
-            resolved_blockers.append("telethon_session_parent_missing")
+            resolved_blockers.append("telegram_api_hash_missing")
+        if not session_name_configured:
+            resolved_blockers.append("telegram_session_name_missing")
+        elif not session_parent_exists:
+            resolved_blockers.append("telegram_session_parent_missing")
         elif not session_parent_writable:
-            resolved_blockers.append("telethon_session_parent_not_writable")
+            resolved_blockers.append("telegram_session_parent_not_writable")
 
     ready = "yes" if not resolved_blockers else "no"
     return RuntimePreflightReport(
         watchlist_schema=_status(watchlist_schema),
         watchlist_readable=_status(watchlist_readable),
         telethon_dependency=_status(telethon_dependency),
-        telethon_api_id_configured=_status(api_id_configured),
-        telethon_api_hash_configured=_status(api_hash_configured),
-        telethon_session_parent_exists=_status(session_parent_exists),
-        telethon_session_parent_writable=_status(session_parent_writable),
+        telegram_api_id_configured=_status(api_id_configured),
+        telegram_api_hash_configured=_status(api_hash_configured),
+        telegram_session_name_configured=_status(session_name_configured),
+        telegram_session_parent_exists=_status(session_parent_exists),
+        telegram_session_parent_writable=_status(session_parent_writable),
         enabled_source_channels=enabled_source_channels,
         numeric_source_channels=numeric_source_channels,
         resolver_required_source_channels=resolver_required_source_channels,

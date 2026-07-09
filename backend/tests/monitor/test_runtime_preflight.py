@@ -11,9 +11,9 @@ from app.modules.monitor.runtime_preflight import (
 def _settings(tmp_path, watchlist_path):
     return Settings(
         WATCHLIST_PATH=watchlist_path,
-        TELETHON_API_ID=123456,
-        TELETHON_API_HASH="secret-hash",
-        TELETHON_SESSION_PATH=tmp_path / "telethon.session",
+        TELEGRAM_API_ID=123456,
+        TELEGRAM_API_HASH="secret-hash",
+        TELEGRAM_SESSION_NAME=str(tmp_path / "telethon"),
     )
 
 
@@ -71,9 +71,9 @@ def test_runtime_preflight_reports_missing_runtime_requirements(tmp_path) -> Non
     missing_parent = tmp_path / "missing" / "telethon.session"
     settings = Settings(
         WATCHLIST_PATH=watchlist_path,
-        TELETHON_API_ID=None,
-        TELETHON_API_HASH="",
-        TELETHON_SESSION_PATH=missing_parent,
+        TELEGRAM_API_ID=None,
+        TELEGRAM_API_HASH="",
+        TELEGRAM_SESSION_NAME=str(missing_parent),
     )
 
     report = run_runtime_preflight(
@@ -84,14 +84,14 @@ def test_runtime_preflight_reports_missing_runtime_requirements(tmp_path) -> Non
 
     assert report.ready_for_one_shot_resolve == "no"
     assert report.telethon_dependency == "fail"
-    assert report.telethon_api_id_configured == "fail"
-    assert report.telethon_api_hash_configured == "fail"
-    assert report.telethon_session_parent_exists == "fail"
+    assert report.telegram_api_id_configured == "fail"
+    assert report.telegram_api_hash_configured == "fail"
+    assert report.telegram_session_parent_exists == "fail"
     assert report.blockers == [
         "telethon_dependency_missing",
-        "telethon_api_id_missing",
-        "telethon_api_hash_missing",
-        "telethon_session_parent_missing",
+        "telegram_api_id_missing",
+        "telegram_api_hash_missing",
+        "telegram_session_parent_missing",
     ]
 
 
@@ -108,9 +108,9 @@ def test_runtime_preflight_does_not_require_telethon_for_numeric_only_refs(
     )
     settings = Settings(
         WATCHLIST_PATH=watchlist_path,
-        TELETHON_API_ID=None,
-        TELETHON_API_HASH="",
-        TELETHON_SESSION_PATH=tmp_path / "missing" / "telethon.session",
+        TELEGRAM_API_ID=None,
+        TELEGRAM_API_HASH="",
+        TELEGRAM_SESSION_NAME=str(tmp_path / "missing" / "telethon"),
     )
 
     report = run_runtime_preflight(

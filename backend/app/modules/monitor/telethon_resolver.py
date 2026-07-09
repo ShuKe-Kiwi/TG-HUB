@@ -7,6 +7,7 @@ handlers, start long-running loops, download media, or persist any data.
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -85,12 +86,17 @@ class TelethonControlledChannelResolver:
         app_settings: Settings | None = None,
     ) -> "TelethonControlledChannelResolver":
         resolved_settings = app_settings or settings
-        if resolved_settings.TELETHON_API_ID is None:
+        if resolved_settings.TELEGRAM_API_ID is None:
             raise ChannelResolveError(
                 "resolver_unavailable",
                 "SESSION_UNAVAILABLE",
             )
-        if not resolved_settings.TELETHON_API_HASH.strip():
+        if not resolved_settings.TELEGRAM_API_HASH.strip():
+            raise ChannelResolveError(
+                "resolver_unavailable",
+                "SESSION_UNAVAILABLE",
+            )
+        if not resolved_settings.TELEGRAM_SESSION_NAME.strip():
             raise ChannelResolveError(
                 "resolver_unavailable",
                 "SESSION_UNAVAILABLE",
@@ -106,9 +112,9 @@ class TelethonControlledChannelResolver:
             ) from exc
 
         client = TelegramClient(
-            str(resolved_settings.TELETHON_SESSION_PATH.expanduser()),
-            resolved_settings.TELETHON_API_ID,
-            resolved_settings.TELETHON_API_HASH,
+            str(Path(resolved_settings.TELEGRAM_SESSION_NAME).expanduser()),
+            resolved_settings.TELEGRAM_API_ID,
+            resolved_settings.TELEGRAM_API_HASH,
         )
         return cls(client, get_peer_id=get_peer_id)
 
@@ -162,4 +168,5 @@ async def resolve_watchlist_once(
 ) -> ResolvedSourceChannelReport:
     """Connect, resolve all enabled source channels once, then disconnect."""
     async with resolver:
-        return await resolve_source_channels(watchlist, resolver)
+        report = await resolve_source_channels(watchlist, resolver)
+        return report.model_copy(update={"telegram_api_accessed": "yes"})

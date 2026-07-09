@@ -107,7 +107,7 @@ class ResolvedSourceChannelReport(BaseModel):
     resolver_unavailable_count: int
     duplicate_ref_count: int
     result_count_matches_enabled_count: bool
-    telegram_api_accessed: Literal["no"] = "no"
+    telegram_api_accessed: Literal["yes", "no"] = "no"
     database_accessed: Literal["no"] = "no"
     parser_called: Literal["no"] = "no"
     normalizer_called: Literal["no"] = "no"

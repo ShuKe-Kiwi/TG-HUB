@@ -93,6 +93,7 @@ async def test_resolve_watchlist_once_connects_resolves_and_disconnects() -> Non
     assert report.listener_started == "no"
     assert report.handler_registered == "no"
     assert report.long_running_process == "no"
+    assert report.telegram_api_accessed == "yes"
 
 
 @pytest.mark.asyncio
@@ -173,8 +174,8 @@ def test_from_settings_requires_telethon_credentials() -> None:
     with pytest.raises(ChannelResolveError) as exc_info:
         TelethonControlledChannelResolver.from_settings(
             Settings(
-                TELETHON_API_ID=None,
-                TELETHON_API_HASH="",
+                TELEGRAM_API_ID=None,
+                TELEGRAM_API_HASH="",
             )
         )
 
