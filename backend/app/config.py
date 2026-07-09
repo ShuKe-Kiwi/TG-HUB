@@ -32,6 +32,9 @@ class Settings(BaseSettings):
 
     # Monitor configuration
     WATCHLIST_PATH: Path = Path("~/.tg-hub/watchlist.json")
+    TELETHON_SESSION_PATH: Path = Path("~/.tg-hub/telethon.session")
+    TELETHON_API_ID: int | None = None
+    TELETHON_API_HASH: str = ""
 
 
 settings = Settings()

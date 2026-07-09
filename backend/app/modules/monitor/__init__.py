@@ -26,6 +26,10 @@ from app.modules.monitor.source_channels import (
     SourceChannelPrecheckResult,
     precheck_source_channels,
 )
+from app.modules.monitor.telethon_resolver import (
+    TelethonControlledChannelResolver,
+    resolve_watchlist_once,
+)
 
 __all__ = [
     "ChannelResolveError",
@@ -36,6 +40,7 @@ __all__ = [
     "ResolvedSourceChannelReportItem",
     "SourceChannelConfig",
     "SourceChannelPrecheckResult",
+    "TelethonControlledChannelResolver",
     "WatchTitleConfig",
     "WatchlistConfig",
     "WatchlistMatchResult",
@@ -44,4 +49,5 @@ __all__ = [
     "normalize_watch_text",
     "precheck_source_channels",
     "resolve_source_channels",
+    "resolve_watchlist_once",
 ]
