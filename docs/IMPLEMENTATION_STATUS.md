@@ -1,7 +1,7 @@
 # TG-HUB 实施进度
 
 > 架构基准：docs/ARCHITECTURE.md V2.2
-> 最后更新：2026-07-09
+> 最后更新：2026-07-10
 
 ---
 
@@ -24,6 +24,40 @@
 | P5-E | 应用装配与 MVP-B E2E 验收 | ✅ 完成 | 12/12 |
 | P6-2D | 长期 monitor runtime 生命周期 | ✅ 第一版完成 | 6/6 |
 | P6-2E-1 | RawMessage ingest disposition 前置改造 | ✅ 完成 | 8/8 |
+| P6-2E-2 | Telegram channel id canonical helper | ✅ 完成 | 8/8 |
+
+---
+
+## P6-2E-2 详细记录
+
+### 完成日期
+2026-07-10
+
+### 实现内容
+
+- 固定项目内 Telegram channel id canonical form 为 `telethon_marked_peer_id`
+- canonical 值与 Telethon `NewMessage.event.chat_id` / `telethon.utils.get_peer_id(entity)` 一致
+- 合法示例：`-1001234567890`
+- 新增 `canonicalize_source_channel_id()` 纯函数 helper
+- 稳定返回 `valid` / `invalid_source_ref`
+- 稳定错误码覆盖：
+  - `SOURCE_REF_NOT_NUMERIC`
+  - `SOURCE_REF_OUT_OF_RANGE`
+  - `SOURCE_REF_NOT_CANONICAL`
+- 裸 Telegram entity/channel id，例如 `1234567890`，固定判为非 canonical，不猜测转换
+- 输出只包含脱敏 source ref，不输出完整频道引用
+
+**P6-2E-2 合计：8 个 channel id canonicalization 测试，全部通过**
+
+### 边界确认
+
+- ✅ 只新增 canonical id 纯 helper
+- ✅ 未实现 `IngestionBoundary.ingest_incoming()`
+- ✅ 未让 Monitor 接生产入库
+- ✅ 未访问数据库
+- ✅ 未创建 `AsyncSession`
+- ✅ 未调用 `RawMessageService`
+- ✅ 未接 Parser / Normalizer / Dedup / EventBus / Bot
 
 ---
 

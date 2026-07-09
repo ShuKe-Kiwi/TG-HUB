@@ -229,23 +229,42 @@ Telegram entity/channel id: 1234567890
 Peer/channel marked id:     -1001234567890
 ```
 
-项目必须只采用一种形式作为 `Channel.tg_id` 规范。P6-2E 第一版要求：
+项目必须只采用一种形式作为 `Channel.tg_id` 规范。P6-2E 第一版锁定为：
 
 ```text
 CHANNEL_ID_CANONICAL_FORM:
-- IncomingMessage.source_ref 必须是十进制 numeric ref
-- 解析后统一转换为项目既有 Channel.tg_id 规范
+- telethon_marked_peer_id
+- 即 Telethon NewMessage event.chat_id / telethon.utils.get_peer_id(entity) 形式
+- 示例：-1001234567890
+- IncomingMessage.source_ref 必须是这个形式的十进制 numeric ref
 - Channel lookup 只按 canonical tg_id 查询
 - 禁止同时尝试正数和 -100 形式
 - ID 规范由单一 canonicalization helper 负责
 ```
 
-若现有 `Channel.tg_id` 存储 `-100...`，boundary 必须明确只按 `-100...` 查询。若现有 `Channel.tg_id` 存储裸 channel id，也必须只按裸 id 查询。
+因此 `Channel.tg_id` 必须存储 `-100...` marked peer id。裸 Telegram entity/channel id，例如 `1234567890`，在 P6-2E boundary 中固定视为非 canonical，不做猜测转换。
+
+当前来源约束：
+
+```text
+真实监听事件:
+Telethon NewMessage event.chat_id
+-> IncomingMessage.source_ref
+-> canonicalize_source_channel_id(source_ref)
+-> Channel.tg_id
+
+一次性频道解析:
+telethon.utils.get_peer_id(entity)
+-> resolved numeric_channel_id
+-> Channel.tg_id
+```
+
+这意味着监听别人的频道时，项目不要求用户手动知道裸 entity id。只要账号有权访问该公开/私有频道，受控 resolver 可以通过 `t.me` / `@username` 解析出 `-100...`，监听事件也会提供同一 canonical form。
 
 错误示例：
 
 ```text
-source_ref 合法
+source_ref 是裸数字 1234567890
 但 boundary 同时猜测 1234567890 和 -1001234567890
 -> 频道 ID 语义被隐藏
 ```
@@ -256,6 +275,19 @@ source_ref 合法
 source_ref
 -> canonicalize_source_channel_id(source_ref)
 -> ChannelRepository.get_by_tg_id(canonical_tg_id)
+```
+
+`canonicalize_source_channel_id()` 稳定返回：
+
+```text
+valid:
+- canonical_tg_id
+- channel_id_canonical_form = telethon_marked_peer_id
+
+invalid_source_ref:
+- SOURCE_REF_NOT_NUMERIC
+- SOURCE_REF_OUT_OF_RANGE
+- SOURCE_REF_NOT_CANONICAL
 ```
 
 ## Channel 约束

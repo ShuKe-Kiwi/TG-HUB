@@ -6,6 +6,10 @@ from app.modules.monitor.config import (
     WatchlistConfig,
     load_watchlist,
 )
+from app.modules.monitor.channel_ids import (
+    CanonicalChannelIdResult,
+    canonicalize_source_channel_id,
+)
 from app.modules.monitor.filter import (
     WatchlistMatchResult,
     filter_message,
@@ -58,6 +62,7 @@ __all__ = [
     "ChannelResolveError",
     "ChannelResolveResult",
     "ChannelResolver",
+    "CanonicalChannelIdResult",
     "IncomingMessageAdapter",
     "IncomingMessage",
     "MonitorDryRunEventReport",
@@ -80,6 +85,7 @@ __all__ = [
     "WatchlistConfig",
     "WatchlistMatchResult",
     "build_runtime_preflight_report",
+    "canonicalize_source_channel_id",
     "create_telethon_client_from_settings",
     "filter_message",
     "load_watchlist",
