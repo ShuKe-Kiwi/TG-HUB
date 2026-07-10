@@ -63,6 +63,13 @@ from app.modules.monitor.telethon_resolver import (
     TelethonControlledChannelResolver,
     resolve_watchlist_once,
 )
+from app.modules.monitor.watchlist_service import (
+    WatchlistApplicationService,
+    WatchlistReplaceResult,
+    WatchlistServiceError,
+    WatchlistSnapshot,
+    WatchlistValidationResult,
+)
 
 __all__ = [
     "ChannelResolveError",
@@ -93,6 +100,11 @@ __all__ = [
     "WatchTitleConfig",
     "WatchlistConfig",
     "WatchlistMatchResult",
+    "WatchlistApplicationService",
+    "WatchlistReplaceResult",
+    "WatchlistServiceError",
+    "WatchlistSnapshot",
+    "WatchlistValidationResult",
     "build_runtime_preflight_report",
     "canonicalize_source_channel_id",
     "create_telethon_client_from_settings",
