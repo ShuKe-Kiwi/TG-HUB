@@ -25,6 +25,51 @@
 | P6-2D | 长期 monitor runtime 生命周期 | ✅ 第一版完成 | 6/6 |
 | P6-2E-1 | RawMessage ingest disposition 前置改造 | ✅ 完成 | 8/8 |
 | P6-2E-2 | Telegram channel id canonical helper | ✅ 完成 | 8/8 |
+| P6-2E-3 | IncomingMessage ingestion boundary | ✅ 完成 | 9/9 |
+
+---
+
+## P6-2E-3 详细记录
+
+### 完成日期
+2026-07-10
+
+### 实现内容
+
+- 新增 `IncomingMessageIngestionBoundary`
+- 新增脱敏结果 DTO `IncomingIngestionResult`
+- application boundary 自己拥有 session lifecycle
+- 固定 `IncomingMessage.source_ref -> canonical tg_id -> Channel.tg_id -> Channel.id`
+- 固定 `source_message_id` 必须为正整数
+- 固定正文选择规则：`text` 非空优先，否则使用 `caption`
+- 判空使用 `strip()`，写入 `RawMessage.raw_text` 时保留原始选中字段
+- `raw_payload` 原样传入 RawMessage，但结果不输出完整 payload
+- `raw_media_refs` 在 P6-2E-3 固定为 `None`
+- 调用 `RawMessageService.ingest()` 并只根据 service disposition 映射 `stored / duplicate`
+- `channel_not_registered` 不调用 `RawMessageService`
+- 非法输入不打开数据库 session
+- service 异常和非法 disposition 映射为稳定失败结果
+
+**P6-2E-3 合计：9 个 ingestion boundary 测试，全部通过**
+
+### 边界确认
+
+- ✅ Monitor runtime 未接生产入库
+- ✅ Monitor 未直接访问 DB / Repository / RawMessageService
+- ✅ P6-2E-3 只实现 application ingestion boundary
+- ✅ 未自动创建 Channel
+- ✅ 未调用 Parser / Normalizer / Dedup
+- ✅ 未发布 EventBus
+- ✅ 未发送 Bot 通知
+- ✅ 未下载媒体或回溯历史消息
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `backend/app/modules/ingestion/boundary.py` | P6-2E IncomingMessage 入库应用边界 |
+| `backend/app/modules/ingestion/__init__.py` | ingestion boundary 导出 |
+| `backend/tests/ingestion/test_boundary.py` | P6-2E-3 边界测试 |
 
 ---
 
