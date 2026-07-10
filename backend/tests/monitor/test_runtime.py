@@ -38,6 +38,17 @@ class FakeNewMessageBuilder:
 class FakeIngestionResult:
     status: str
     error_code: str | None = None
+    raw_message_id: int | None = None
+
+
+@dataclass
+class FakeProcessingResult:
+    status: str
+    raw_message_id: int | None
+    error_code: str | None = None
+    parse_executed: bool = False
+    dedup_executed: bool = False
+    eventbus_enabled: bool = False
 
 
 class FakeIngestionBoundary:
@@ -53,6 +64,28 @@ class FakeIngestionBoundary:
 
     async def ingest_incoming(self, message):
         self.calls.append(message)
+        if self.error is not None:
+            raise self.error
+        if len(self.results) == 1:
+            return self.results[0]
+        return self.results.pop(0)
+
+
+class FakeProcessingBoundary:
+    def __init__(
+        self,
+        results: list[Any] | None = None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.results = results or [
+            FakeProcessingResult("dedup_new", raw_message_id=1)
+        ]
+        self.error = error
+        self.calls: list[int] = []
+
+    async def process_raw_message(self, raw_message_id: int):
+        self.calls.append(raw_message_id)
         if self.error is not None:
             raise self.error
         if len(self.results) == 1:
@@ -197,14 +230,16 @@ async def test_runtime_registers_single_handler_and_stops_cleanly() -> None:
     assert summary.events_rejected_total == 0
     assert summary.ingest_attempt_total == 0
     assert summary.production_ingest_enabled == "no"
+    assert summary.processing_enabled == "no"
+    assert summary.process_attempt_total == 0
+    assert summary.process_success_total == 0
+    assert summary.process_already_done_total == 0
+    assert summary.process_failed_total == 0
+    assert summary.parse_executed_total == 0
+    assert summary.dedup_executed_total == 0
     assert summary.handler_removed == "yes"
     assert summary.client_disconnected_cleanly == "yes"
     assert summary.heartbeat_emitted == "yes"
-    assert summary.database_accessed == "no"
-    assert summary.parser_called == "no"
-    assert summary.normalizer_called == "no"
-    assert summary.dedup_called == "no"
-    assert summary.notification_sent == "no"
     assert summary.history_backfill_called == "no"
     serialized = json.dumps(summary.model_dump(mode="json"), ensure_ascii=False)
     assert "私密正文" not in serialized
@@ -372,10 +407,10 @@ async def test_runtime_handoff_ingests_only_matched_messages() -> None:
     assert summary.ingest_rejected_total == 0
     assert summary.ingest_failed_total == 0
     assert summary.production_ingest_enabled == "yes"
-    assert summary.database_accessed == "no"
-    assert summary.parser_called == "no"
-    assert summary.dedup_called == "no"
+    assert summary.processing_enabled == "no"
+    assert summary.process_attempt_total == 0
     assert heartbeats[-1].production_ingest_enabled == "yes"
+    assert heartbeats[-1].processing_enabled == "no"
 
 
 @pytest.mark.asyncio
@@ -483,9 +518,285 @@ async def test_runtime_handoff_boundary_exception_does_not_stop_runtime() -> Non
     assert summary.events_rejected_total == 1
     assert summary.ingest_attempt_total == 1
     assert summary.ingest_failed_total == 1
-    assert summary.handler_error_total == 1
+    assert summary.handler_error_total == 0
     assert summary.errors[0].error_code == "INGESTION_ERROR"
     assert "hidden internals" not in json.dumps(
+        summary.model_dump(mode="json"),
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_processes_stored_and_duplicate_canonical_raw_ids() -> None:
+    client = FakeRuntimeClient()
+    ingestion = FakeIngestionBoundary(
+        [
+            FakeIngestionResult("stored", raw_message_id=101),
+            FakeIngestionResult("duplicate", raw_message_id=202),
+        ]
+    )
+    processing = FakeProcessingBoundary(
+        [
+            FakeProcessingResult(
+                "dedup_new",
+                raw_message_id=101,
+                parse_executed=True,
+                dedup_executed=True,
+                eventbus_enabled=True,
+            ),
+            FakeProcessingResult(
+                "already_processed",
+                raw_message_id=202,
+                eventbus_enabled=True,
+            ),
+        ]
+    )
+    heartbeats: list[MonitorHeartbeat] = []
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        heartbeat_sink=heartbeats.append,
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=ingestion,
+        processing_boundary=processing,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await asyncio.wait_for(_wait_for(lambda: len(heartbeats) >= 1), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 B"))
+    )
+    await runtime._emit_heartbeat()
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert processing.calls == [101, 202]
+    assert summary.ingest_stored_total == 1
+    assert summary.ingest_duplicate_total == 1
+    assert summary.processing_enabled == "yes"
+    assert summary.process_attempt_total == 2
+    assert summary.process_success_total == 1
+    assert summary.process_already_done_total == 1
+    assert summary.process_failed_total == 0
+    assert summary.parse_executed_total == 1
+    assert summary.dedup_executed_total == 1
+    assert summary.last_process_status == "already_processed"
+    assert summary.last_process_error_code is None
+    assert summary.handler_error_total == 0
+    assert (
+        summary.process_attempt_total
+        == summary.process_success_total
+        + summary.process_already_done_total
+        + summary.process_failed_total
+    )
+    assert heartbeats[-1].processing_enabled == "yes"
+    assert heartbeats[-1].process_attempt_total == 2
+    assert heartbeats[-1].process_success_total == 1
+    assert heartbeats[-1].process_already_done_total == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_skips_processing_for_rejected_ingestion() -> None:
+    client = FakeRuntimeClient()
+    ingestion = FakeIngestionBoundary(
+        [
+            FakeIngestionResult(
+                "channel_not_registered",
+                error_code="CHANNEL_TG_ID_NOT_FOUND",
+            )
+        ]
+    )
+    processing = FakeProcessingBoundary()
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=ingestion,
+        processing_boundary=processing,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert processing.calls == []
+    assert summary.ingest_rejected_total == 1
+    assert summary.process_attempt_total == 0
+    assert summary.process_failed_total == 0
+    assert summary.last_ingest_error_code == "CHANNEL_TG_ID_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_missing_or_invalid_raw_message_id_before_process() -> None:
+    client = FakeRuntimeClient()
+    ingestion = FakeIngestionBoundary(
+        [
+            FakeIngestionResult("stored", raw_message_id=None),
+            FakeIngestionResult("duplicate", raw_message_id=0),
+        ]
+    )
+    processing = FakeProcessingBoundary()
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=ingestion,
+        processing_boundary=processing,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 B"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert processing.calls == []
+    assert summary.process_attempt_total == 0
+    assert summary.process_failed_total == 0
+    assert summary.last_process_error_code == "PROCESSING_INVALID_RESULT"
+    assert [error.error_code for error in summary.errors] == [
+        "PROCESSING_INVALID_RESULT",
+        "PROCESSING_INVALID_RESULT",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_isolates_unknown_ingestion_status() -> None:
+    client = FakeRuntimeClient()
+    ingestion = FakeIngestionBoundary([FakeIngestionResult("strange")])
+    processing = FakeProcessingBoundary()
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=ingestion,
+        processing_boundary=processing,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert processing.calls == []
+    assert summary.ingest_failed_total == 1
+    assert summary.last_ingest_error_code == "INGESTION_INVALID_RESULT"
+    assert summary.process_attempt_total == 0
+    assert summary.handler_error_total == 0
+    assert summary.errors[0].error_code == "INGESTION_INVALID_RESULT"
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_invalid_processing_results() -> None:
+    client = FakeRuntimeClient()
+    ingestion = FakeIngestionBoundary(
+        [
+            FakeIngestionResult("stored", raw_message_id=301),
+            FakeIngestionResult("duplicate", raw_message_id=302),
+        ]
+    )
+    processing = FakeProcessingBoundary(
+        [
+            FakeProcessingResult("dedup_new", raw_message_id=999),
+            FakeProcessingResult("unknown", raw_message_id=302),
+        ]
+    )
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=ingestion,
+        processing_boundary=processing,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 B"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert processing.calls == [301, 302]
+    assert summary.process_attempt_total == 2
+    assert summary.process_success_total == 0
+    assert summary.process_already_done_total == 0
+    assert summary.process_failed_total == 2
+    assert summary.last_process_error_code == "PROCESSING_INVALID_RESULT"
+    assert summary.handler_error_total == 0
+    assert [error.error_code for error in summary.errors] == [
+        "PROCESSING_INVALID_RESULT",
+        "PROCESSING_INVALID_RESULT",
+    ]
+    assert (
+        summary.process_attempt_total
+        == summary.process_success_total
+        + summary.process_already_done_total
+        + summary.process_failed_total
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_processing_exception_does_not_increment_handler_error() -> None:
+    client = FakeRuntimeClient()
+    ingestion = FakeIngestionBoundary(
+        [FakeIngestionResult("stored", raw_message_id=401)]
+    )
+    processing = FakeProcessingBoundary(error=RuntimeError("processing exploded"))
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=ingestion,
+        processing_boundary=processing,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert processing.calls == [401]
+    assert summary.process_attempt_total == 1
+    assert summary.process_failed_total == 1
+    assert summary.handler_error_total == 0
+    assert summary.last_process_error_code == "PROCESSING_BOUNDARY_EXCEPTION"
+    assert summary.errors[0].error_code == "PROCESSING_BOUNDARY_EXCEPTION"
+    assert "processing exploded" not in json.dumps(
         summary.model_dump(mode="json"),
         ensure_ascii=False,
     )

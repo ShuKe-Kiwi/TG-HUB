@@ -29,6 +29,62 @@
 | P6-2E-4 | Monitor -> IngestionBoundary 受控 handoff | ✅ 完成 | 10/10 |
 | P6-2F | RawMessage -> Parser / Normalizer / Dedup 编排 | ✅ 完成 | 20/20 |
 | P6-2G | EventBus / Bot 查询通知接入 | ✅ 完成 | 9/9 |
+| P6-2H | Monitor -> ingest -> process handoff 编排 | ✅ 完成 | 6/6 |
+
+---
+
+## P6-2H 详细记录
+
+### 完成日期
+2026-07-10
+
+### 实现内容
+
+- `MonitorRuntime` 新增可选 `processing_boundary`
+- Monitor 只依赖 processing boundary 协议
+- `stored / duplicate` 且 canonical `raw_message_id` 为正整数时触发 processing
+- rejected / `ingest_failed` 不触发 processing
+- processing boundary 缺失时保持 ingestion-only 行为
+- `process_attempt_total` 只在真正调用 processing 前增加
+- 新增 `process_success_total`
+- 新增 `process_already_done_total`
+- 新增 `process_failed_total`
+- 新增 `parse_executed_total`
+- 新增 `dedup_executed_total`
+- 新增 `last_process_at / last_process_status / last_process_error_code`
+- 新增 `processing_enabled`
+- 校验 processing result 的 status、raw_message_id 与 bool execution flags
+- 新增稳定错误码 `INGESTION_INVALID_RESULT`
+- 新增稳定错误码 `PROCESSING_BOUNDARY_EXCEPTION`
+- 新增稳定错误码 `PROCESSING_INVALID_RESULT`
+- processing exception 不增加 `handler_error_total`
+- summary / heartbeat 不再输出 Monitor 无法可靠观察的 `database_accessed / parser_called / normalizer_called / dedup_called / notification_sent`
+
+**P6-2H 合计：6 个新增 monitor handoff 测试，全部通过**
+
+### 边界确认
+
+- ✅ Monitor runtime 未直接访问 DB
+- ✅ Monitor runtime 未直接创建 `AsyncSession`
+- ✅ Monitor runtime 未直接调用 `RawMessageService`
+- ✅ Monitor runtime 未直接调用 Parser / Normalizer / Dedup
+- ✅ Monitor runtime 未直接发布 EventBus
+- ✅ Monitor runtime 未直接发送 Bot 通知
+- ✅ 未引入 worker / queue / retry
+- ✅ 未引入 Outbox
+- ✅ 未新增 history backfill
+- ✅ 未新增媒体下载
+- ❌ 未实现 runtime start command / supervisor integration
+- ❌ 未实现历史补偿扫描
+- ❌ 未实现可靠通知
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/app/modules/monitor/runtime.py` | P6-2H handoff 编排与 processing counters |
+| `backend/tests/monitor/test_runtime.py` | P6-2H runtime handoff 测试 |
+| `docs/P6-2H_MONITOR_PROCESS_HANDOFF_DESIGN.zh-CN.md` | P6-2H 设计边界 |
 
 ---
 

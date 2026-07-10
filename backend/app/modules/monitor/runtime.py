@@ -65,6 +65,9 @@ RuntimeErrorCode = Literal[
     "HANDLER_ERROR",
     "FILTER_ERROR",
     "INGESTION_ERROR",
+    "INGESTION_INVALID_RESULT",
+    "PROCESSING_BOUNDARY_EXCEPTION",
+    "PROCESSING_INVALID_RESULT",
     "FLOOD_WAIT",
     "ACCESS_FORBIDDEN",
     "CHANNEL_PRIVATE",
@@ -101,6 +104,38 @@ IngestionStatus = Literal[
     "empty_content",
     "ingest_failed",
 ]
+ProcessingStatus = Literal[
+    "invalid_raw_message_id",
+    "raw_message_not_found",
+    "already_processed",
+    "parse_failed",
+    "dedup_skipped",
+    "dedup_new",
+    "dedup_matched",
+    "dedup_failed",
+    "processing_failed",
+]
+_INGESTION_STATUSES = {
+    "stored",
+    "duplicate",
+    "channel_not_registered",
+    "invalid_source_ref",
+    "invalid_message_id",
+    "empty_content",
+    "ingest_failed",
+}
+_PROCESSING_STATUSES = {
+    "invalid_raw_message_id",
+    "raw_message_not_found",
+    "already_processed",
+    "parse_failed",
+    "dedup_skipped",
+    "dedup_new",
+    "dedup_matched",
+    "dedup_failed",
+    "processing_failed",
+}
+_PROCESSING_SUCCESS_STATUSES = {"dedup_new", "dedup_matched", "dedup_skipped"}
 
 
 class MonitorRuntimeConfig(BaseModel):
@@ -175,6 +210,16 @@ class MonitorHeartbeat(BaseModel):
     ingest_failed_total: int
     last_ingest_at: datetime | None
     last_ingest_error_code: str | None
+    processing_enabled: ReportFlag
+    process_attempt_total: int
+    process_success_total: int
+    process_already_done_total: int
+    process_failed_total: int
+    parse_executed_total: int
+    dedup_executed_total: int
+    last_process_at: datetime | None
+    last_process_status: str | None
+    last_process_error_code: str | None
     conversion_error_total: int
     handler_error_total: int
     reconnect_attempt_total: int
@@ -187,11 +232,6 @@ class MonitorHeartbeat(BaseModel):
     liveness: ReportFlag
     readiness: ReportFlag
     heartbeat_total: int
-    database_accessed: Literal["no"] = "no"
-    parser_called: Literal["no"] = "no"
-    normalizer_called: Literal["no"] = "no"
-    dedup_called: Literal["no"] = "no"
-    notification_sent: Literal["no"] = "no"
     history_backfill_called: Literal["no"] = "no"
     raw_event_persisted: Literal["no"] = "no"
     production_ingest_enabled: ReportFlag
@@ -220,6 +260,16 @@ class MonitorRuntimeSummary(BaseModel):
     ingest_failed_total: int
     last_ingest_at: datetime | None
     last_ingest_error_code: str | None
+    processing_enabled: ReportFlag
+    process_attempt_total: int
+    process_success_total: int
+    process_already_done_total: int
+    process_failed_total: int
+    parse_executed_total: int
+    dedup_executed_total: int
+    last_process_at: datetime | None
+    last_process_status: str | None
+    last_process_error_code: str | None
     dto_conversion_error_total: int
     handler_error_total: int
     filter_error_total: int
@@ -231,11 +281,6 @@ class MonitorRuntimeSummary(BaseModel):
     client_disconnected_cleanly: ReportFlag
     heartbeat_emitted: ReportFlag
     report_desensitized: Literal["yes"] = "yes"
-    database_accessed: Literal["no"] = "no"
-    parser_called: Literal["no"] = "no"
-    normalizer_called: Literal["no"] = "no"
-    dedup_called: Literal["no"] = "no"
-    notification_sent: Literal["no"] = "no"
     media_downloaded: Literal["no"] = "no"
     history_backfill_called: Literal["no"] = "no"
     raw_event_persisted: Literal["no"] = "no"
@@ -252,11 +297,26 @@ class MonitorRuntimeClientFactory(Protocol):
 class IngestionBoundaryResult(Protocol):
     status: IngestionStatus
     error_code: str | None
+    raw_message_id: int | None
 
 
 class IncomingMessageIngestionBoundary(Protocol):
     async def ingest_incoming(self, message: Any) -> IngestionBoundaryResult:
         """Ingest one matched IncomingMessage through an application boundary."""
+
+
+class ProcessingBoundaryResult(Protocol):
+    status: ProcessingStatus
+    raw_message_id: int | None
+    error_code: str | None
+    parse_executed: bool
+    dedup_executed: bool
+    eventbus_enabled: bool
+
+
+class RawMessageProcessingBoundary(Protocol):
+    async def process_raw_message(self, raw_message_id: int) -> ProcessingBoundaryResult:
+        """Process one persisted RawMessage through an application boundary."""
 
 
 class MonitorRuntime:
@@ -274,6 +334,7 @@ class MonitorRuntime:
         heartbeat_sink: HeartbeatSink | None = None,
         sleep: SleepFunc | None = None,
         ingestion_boundary: IncomingMessageIngestionBoundary | None = None,
+        processing_boundary: RawMessageProcessingBoundary | None = None,
     ) -> None:
         self.watchlist = watchlist
         self.client = client
@@ -284,6 +345,7 @@ class MonitorRuntime:
         self.heartbeat_sink = heartbeat_sink
         self.sleep = sleep or asyncio.sleep
         self.ingestion_boundary = ingestion_boundary
+        self.processing_boundary = processing_boundary
 
         self.state: RuntimeState = "created"
         self.started_at: datetime | None = None
@@ -303,6 +365,12 @@ class MonitorRuntime:
         self.ingest_duplicate_total = 0
         self.ingest_rejected_total = 0
         self.ingest_failed_total = 0
+        self.process_attempt_total = 0
+        self.process_success_total = 0
+        self.process_already_done_total = 0
+        self.process_failed_total = 0
+        self.parse_executed_total = 0
+        self.dedup_executed_total = 0
         self.dto_conversion_error_total = 0
         self.handler_error_total = 0
         self.filter_error_total = 0
@@ -320,6 +388,9 @@ class MonitorRuntime:
         self.shutdown_reason: ShutdownReason = "not_started"
         self.last_ingest_at: datetime | None = None
         self.last_ingest_error_code: str | None = None
+        self.last_process_at: datetime | None = None
+        self.last_process_status: str | None = None
+        self.last_process_error_code: str | None = None
 
         self._stop_requested = asyncio.Event()
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -540,7 +611,6 @@ class MonitorRuntime:
             result = await self.ingestion_boundary.ingest_incoming(incoming)
         except Exception:
             self.ingest_failed_total += 1
-            self.handler_error_total += 1
             self.last_ingest_error_code = "INGESTION_BOUNDARY_EXCEPTION"
             self._record_error(
                 "INGESTION_ERROR",
@@ -549,8 +619,18 @@ class MonitorRuntime:
             )
             return
 
-        status = result.status
-        error_code = result.error_code
+        status = getattr(result, "status", None)
+        error_code = getattr(result, "error_code", None)
+        if status not in _INGESTION_STATUSES:
+            self.ingest_failed_total += 1
+            self.last_ingest_error_code = "INGESTION_INVALID_RESULT"
+            self._record_error(
+                "INGESTION_INVALID_RESULT",
+                phase="handler",
+                recoverability="transient",
+            )
+            return
+
         if status == "stored":
             self.ingest_stored_total += 1
             self.last_ingest_error_code = None
@@ -563,6 +643,68 @@ class MonitorRuntime:
         else:
             self.ingest_rejected_total += 1
             self.last_ingest_error_code = error_code or status.upper()
+
+        if status in {"stored", "duplicate"}:
+            await self._process_ingested(result)
+
+    async def _process_ingested(self, ingestion_result: Any) -> None:
+        raw_message_id = _positive_int_or_none(
+            getattr(ingestion_result, "raw_message_id", None)
+        )
+        if raw_message_id is None:
+            self.last_process_at = _utcnow()
+            self.last_process_status = "processing_invalid_result"
+            self.last_process_error_code = "PROCESSING_INVALID_RESULT"
+            self._record_error(
+                "PROCESSING_INVALID_RESULT",
+                phase="handler",
+                recoverability="transient",
+            )
+            return
+        if self.processing_boundary is None:
+            return
+
+        self.process_attempt_total += 1
+        self.last_process_at = _utcnow()
+        try:
+            result = await self.processing_boundary.process_raw_message(raw_message_id)
+        except Exception:
+            self.process_failed_total += 1
+            self.last_process_status = "processing_failed"
+            self.last_process_error_code = "PROCESSING_BOUNDARY_EXCEPTION"
+            self._record_error(
+                "PROCESSING_BOUNDARY_EXCEPTION",
+                phase="handler",
+                recoverability="transient",
+            )
+            return
+
+        validation_error = _processing_result_error(result, raw_message_id)
+        if validation_error is not None:
+            self.process_failed_total += 1
+            self.last_process_status = "processing_failed"
+            self.last_process_error_code = validation_error
+            self._record_error(
+                validation_error,
+                phase="handler",
+                recoverability="transient",
+            )
+            return
+
+        status = result.status
+        self.last_process_status = status
+        self.last_process_error_code = result.error_code
+        if result.parse_executed:
+            self.parse_executed_total += 1
+        if result.dedup_executed:
+            self.dedup_executed_total += 1
+
+        if status in _PROCESSING_SUCCESS_STATUSES:
+            self.process_success_total += 1
+        elif status == "already_processed":
+            self.process_already_done_total += 1
+        else:
+            self.process_failed_total += 1
 
     async def _wait_until_stop_or_disconnect(self) -> Literal["stop", "disconnect"]:
         waiters: list[asyncio.Task[Any]] = [
@@ -676,6 +818,16 @@ class MonitorRuntime:
             ingest_failed_total=self.ingest_failed_total,
             last_ingest_at=self.last_ingest_at,
             last_ingest_error_code=self.last_ingest_error_code,
+            processing_enabled=_flag(self.processing_boundary is not None),
+            process_attempt_total=self.process_attempt_total,
+            process_success_total=self.process_success_total,
+            process_already_done_total=self.process_already_done_total,
+            process_failed_total=self.process_failed_total,
+            parse_executed_total=self.parse_executed_total,
+            dedup_executed_total=self.dedup_executed_total,
+            last_process_at=self.last_process_at,
+            last_process_status=self.last_process_status,
+            last_process_error_code=self.last_process_error_code,
             conversion_error_total=self.dto_conversion_error_total,
             handler_error_total=self.handler_error_total,
             reconnect_attempt_total=self.reconnect_attempt_total,
@@ -811,6 +963,16 @@ class MonitorRuntime:
             ingest_failed_total=self.ingest_failed_total,
             last_ingest_at=self.last_ingest_at,
             last_ingest_error_code=self.last_ingest_error_code,
+            processing_enabled=_flag(self.processing_boundary is not None),
+            process_attempt_total=self.process_attempt_total,
+            process_success_total=self.process_success_total,
+            process_already_done_total=self.process_already_done_total,
+            process_failed_total=self.process_failed_total,
+            parse_executed_total=self.parse_executed_total,
+            dedup_executed_total=self.dedup_executed_total,
+            last_process_at=self.last_process_at,
+            last_process_status=self.last_process_status,
+            last_process_error_code=self.last_process_error_code,
             dto_conversion_error_total=self.dto_conversion_error_total,
             handler_error_total=self.handler_error_total,
             filter_error_total=self.filter_error_total,
@@ -845,6 +1007,7 @@ async def run_monitor_runtime_from_settings(
     heartbeat_sink: HeartbeatSink | None = None,
     event_builder_factory: EventBuilderFactory | None = None,
     ingestion_boundary: IncomingMessageIngestionBoundary | None = None,
+    processing_boundary: RawMessageProcessingBoundary | None = None,
 ) -> MonitorRuntimeSummary:
     """Build and run P6-2D runtime from settings.
 
@@ -877,6 +1040,7 @@ async def run_monitor_runtime_from_settings(
         heartbeat_sink=heartbeat_sink,
         event_builder_factory=event_builder_factory,
         ingestion_boundary=ingestion_boundary,
+        processing_boundary=processing_boundary,
     )
     return await runtime.run()
 
@@ -899,6 +1063,37 @@ def _resolved_channel_ids_from_report(
             if item.numeric_channel_id is not None:
                 ids.append(item.numeric_channel_id)
     return tuple(ids)
+
+
+def _positive_int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
+
+
+def _processing_result_error(
+    result: Any,
+    expected_raw_message_id: int,
+) -> RuntimeErrorCode | None:
+    if result is None:
+        return "PROCESSING_INVALID_RESULT"
+    status = getattr(result, "status", None)
+    if status not in _PROCESSING_STATUSES:
+        return "PROCESSING_INVALID_RESULT"
+    if getattr(result, "raw_message_id", None) != expected_raw_message_id:
+        return "PROCESSING_INVALID_RESULT"
+    error_code = getattr(result, "error_code", None)
+    if error_code is not None and not isinstance(error_code, str):
+        return "PROCESSING_INVALID_RESULT"
+    if not isinstance(getattr(result, "parse_executed", None), bool):
+        return "PROCESSING_INVALID_RESULT"
+    if not isinstance(getattr(result, "dedup_executed", None), bool):
+        return "PROCESSING_INVALID_RESULT"
+    if not isinstance(getattr(result, "eventbus_enabled", None), bool):
+        return "PROCESSING_INVALID_RESULT"
+    return None
 
 
 def _failed_startup_summary(
@@ -925,6 +1120,16 @@ def _failed_startup_summary(
         ingest_failed_total=0,
         last_ingest_at=None,
         last_ingest_error_code=None,
+        processing_enabled="no",
+        process_attempt_total=0,
+        process_success_total=0,
+        process_already_done_total=0,
+        process_failed_total=0,
+        parse_executed_total=0,
+        dedup_executed_total=0,
+        last_process_at=None,
+        last_process_status=None,
+        last_process_error_code=None,
         dto_conversion_error_total=0,
         handler_error_total=0,
         filter_error_total=0,
