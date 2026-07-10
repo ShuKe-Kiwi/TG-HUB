@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     # Telegram
     TELEGRAM_WEBHOOK_SECRET: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_ALLOWED_CHAT_IDS: str = ""
     TELEGRAM_NOTIFY_CHAT_IDS: str = ""
     TELEGRAM_SESSION_NAME: str = "~/.tg-hub/telethon"

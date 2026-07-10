@@ -54,6 +54,11 @@ from app.modules.monitor.runtime import (
     MonitorRuntimeSummary,
     run_monitor_runtime_from_settings,
 )
+from app.modules.monitor.preflight import (
+    MonitorStartupPreflightReport,
+    StaticStartupPreflight,
+    run_static_startup_preflight,
+)
 from app.modules.monitor.telethon_resolver import (
     TelethonControlledChannelResolver,
     resolve_watchlist_once,
@@ -75,7 +80,9 @@ __all__ = [
     "MonitorRuntimeConfig",
     "MonitorRuntimeError",
     "MonitorRuntimeSummary",
+    "MonitorStartupPreflightReport",
     "RuntimePreflightReport",
+    "StaticStartupPreflight",
     "ResolvedSourceChannelReport",
     "ResolvedSourceChannelReportItem",
     "SourceChannelConfig",
@@ -98,4 +105,5 @@ __all__ = [
     "run_monitor_dry_run",
     "run_monitor_runtime_from_settings",
     "run_runtime_preflight",
+    "run_static_startup_preflight",
 ]

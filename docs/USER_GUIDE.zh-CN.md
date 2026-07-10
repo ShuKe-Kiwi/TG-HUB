@@ -1,7 +1,7 @@
 # tg-hub 项目使用说明书
 
-> 适用对象：本地开发、阶段验收、monitor dry-run 验证。
-> 当前状态：长期运行 monitor 尚未实现；P6-2D 仅完成设计锁定。
+> 适用对象：本地开发、阶段验收、长期 monitor 启停与排障。
+> 当前状态：长期 monitor、入库、处理、EventBus/Bot 通知链路和 CLI 启动入口已实现。
 
 ## 1. 项目用途
 
@@ -20,15 +20,12 @@
 - source channel 预检
 - 一次性频道身份解析
 - 短时真实监听 dry-run
-- 长期运行 monitor 设计锁定
+- 长期运行 monitor 生命周期、重连、心跳和优雅停机
+- Monitor -> ingestion -> processing handoff
+- EventBus 与可选 Bot 资源通知
+- CLI `preflight` / `run` 启动入口
 
-尚未完成：
-
-- 长期运行 monitor 实现
-- monitor 自动入库
-- monitor 调 Parser / Normalizer / Dedup
-- monitor 发 Bot 通知
-- history backfill
+尚未完成：可视化管理台、history backfill、Outbox/可靠通知、生产 supervisor 和多实例运行语义。
 
 ## 2. 目录说明
 
@@ -210,7 +207,7 @@ cd /Users/kiwishook/nova_projects/tg-hub/backend
 ./.venv/bin/pytest tests/bot/test_bot_p5d.py tests/infra/test_eventbus.py tests/monitor tests/normalizer tests/parser
 ```
 
-数据库相关测试需要 PostgreSQL 测试库。monitor dry-run 阶段不需要数据库。
+数据库相关测试需要 PostgreSQL 测试库。`preflight` 不连接数据库；`run` 启动时会执行一次只读数据库可用性检查。
 
 ## 7. P6-2B：watchlist 离线验收
 
@@ -357,9 +354,9 @@ blockers
 
 `traffic_observed=no` 不一定表示失败。它可能只是测试窗口内没有真实消息到达。
 
-## 12. P6-2D：长期 monitor 设计
+## 12. 长期 monitor runtime
 
-P6-2D 当前只是设计锁定。
+P6-2D 至 P6-2H 已实现长期 runtime 及受控业务 handoff：
 
 文档：
 
@@ -367,7 +364,7 @@ P6-2D 当前只是设计锁定。
 docs/P6-2D_MONITOR_RUNTIME_DESIGN.zh-CN.md
 ```
 
-它定义：
+它支持：
 
 - runtime 状态机
 - startup lifecycle
@@ -378,17 +375,80 @@ docs/P6-2D_MONITOR_RUNTIME_DESIGN.zh-CN.md
 - graceful shutdown
 - observability
 - backpressure
-- 实现测试矩阵
+- 匹配消息经 application boundary 写入 RawMessage
+- 对新入库消息执行 Parser / Normalizer / Dedup 编排
+- 通过 EventBus 触发可选 Bot 通知
 
-它尚未实现：
+Monitor 仍然只是传输适配和 handoff 层，不直接访问 Session、Repository、Parser、Dedup 或 Bot transport。
 
-- 长期 monitor runtime
-- 自动重连代码
-- heartbeat loop 代码
-- production lifecycle
-- DB ingest pipeline
+## 13. 启动前静态检查
 
-## 13. 启动 FastAPI 应用
+进入后端目录：
+
+```bash
+cd /Users/kiwishook/nova_projects/tg-hub/backend
+```
+
+执行纯本地检查：
+
+```bash
+./.venv/bin/python -m app.modules.monitor.cli preflight
+```
+
+机器可读 JSON：
+
+```bash
+./.venv/bin/python -m app.modules.monitor.cli preflight --preflight-json
+```
+
+该命令检查 Telethon 依赖、Telegram API 配置、session 父目录、watchlist schema 和数据库连接字符串。它不会连接 Telegram、解析频道、连接数据库或调用 Bot API。
+
+返回码：`0` 表示通过，`2` 表示存在配置 blocker。
+
+## 14. 启动长期 monitor
+
+先确认 PostgreSQL 已启动、数据库迁移已完成，并且 watchlist 中的频道已在 Channel 表登记。然后运行：
+
+```bash
+cd /Users/kiwishook/nova_projects/tg-hub/backend
+./.venv/bin/python -m app.modules.monitor.cli run
+```
+
+输出机器可读 summary：
+
+```bash
+./.venv/bin/python -m app.modules.monitor.cli run --summary-json
+```
+
+把 heartbeat 写入 JSONL：
+
+```bash
+./.venv/bin/python -m app.modules.monitor.cli run \
+  --heartbeat-jsonl ~/.tg-hub/monitor-heartbeat.jsonl
+```
+
+禁用 Bot 通知但保留 EventBus：
+
+```bash
+./.venv/bin/python -m app.modules.monitor.cli run --no-bot-notify
+```
+
+按 `Ctrl+C` 会请求 graceful stop，等待 handler drain、移除 handler、断开 Telethon client、关闭 Bot HTTP client 和 heartbeat 文件，再输出 final summary。`SIGTERM` 使用相同停机路径。
+
+退出码：
+
+| code | 含义 |
+|------|------|
+| `0` | 正常启动并优雅停止 |
+| `1` | runtime 启动或运行失败 |
+| `2` | static preflight 未通过 |
+| `130` | SIGINT 导致无法生成 final summary |
+
+Bot 通知只有在 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_NOTIFY_CHAT_IDS` 同时有效时启用。缺少 Bot 配置不会阻止 monitor 启动；summary 会显示 `disabled_config_missing`。
+
+频道和资源名仍通过 `watchlist.json` 管理，可视化管理台属于后续阶段。
+
+## 15. 启动 FastAPI 应用
 
 如果只需要启动 API 服务：
 
@@ -405,15 +465,7 @@ curl http://127.0.0.1:8000/health
 
 Telegram Bot webhook 需要额外配置 Bot token、webhook secret 和路由，不属于 monitor dry-run 必需项。
 
-## 14. Git 提交注意事项
-
-当前工作区中 `backend/uv.lock` 是未跟踪文件。
-
-除非阶段明确批准 lockfile 变更，否则提交时不要包含：
-
-```text
-backend/uv.lock
-```
+## 16. Git 提交注意事项
 
 阶段提交前建议：
 
@@ -422,7 +474,7 @@ git status --short
 git diff --cached --stat
 ```
 
-## 15. 常见问题
+## 17. 常见问题
 
 ### `../.venv/bin/pip: no such file or directory`
 
@@ -475,6 +527,21 @@ exit_reason: timeout
 
 说明实现路径正常，只是窗口内没有真实目标频道消息到达。
 
-### 可以直接进入长期 monitor 吗？
+### `database_unavailable`
 
-不可以。长期 monitor 必须先按 P6-2D 设计实现 runtime 生命周期、重连、心跳、错误恢复、可观测性和优雅停机。
+`run` 的有限数据库 readiness check 失败。确认 PostgreSQL 正在运行、`DATABASE_URL` 正确并且当前用户可连接。该检查只执行 `SELECT 1`，不写业务数据。
+
+### `channel_not_registered`
+
+Telegram numeric channel id 没有对应 Channel 记录。P6-2E 明确禁止自动创建 Channel，需要先通过既有 Channel 管理流程登记 canonical Telethon marked peer id。
+
+### Bot 通知显示 `disabled_config_missing`
+
+同时配置以下两项后重新启动：
+
+```text
+TELEGRAM_BOT_TOKEN
+TELEGRAM_NOTIFY_CHAT_IDS
+```
+
+多个通知 chat id 使用英文逗号分隔。不要把 token、API hash、session 文件或 `DATABASE_URL` 放进日志和验收报告。

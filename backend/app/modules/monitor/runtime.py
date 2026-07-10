@@ -845,7 +845,9 @@ class MonitorRuntime:
             production_ingest_enabled=_flag(self.ingestion_boundary is not None),
         )
         if self.heartbeat_sink is not None:
-            await _maybe_await(self.heartbeat_sink(heartbeat))
+            emit = getattr(self.heartbeat_sink, "emit", None)
+            target = emit if callable(emit) else self.heartbeat_sink
+            await _maybe_await(target(heartbeat))
 
     async def _shutdown(self) -> None:
         if self._final_summary_emitted:
@@ -1152,6 +1154,18 @@ def _failed_startup_summary(
                 occurred_at=now,
             )
         ],
+    )
+
+
+def failed_monitor_runtime_summary(
+    error_code: RuntimeErrorCode,
+    *,
+    enabled_source_channels: int = 0,
+) -> MonitorRuntimeSummary:
+    """Build the stable public startup-failure summary used by launchers."""
+    return _failed_startup_summary(
+        error_code,
+        enabled_source_channels=enabled_source_channels,
     )
 
 
