@@ -64,6 +64,7 @@ RuntimeErrorCode = Literal[
     "DTO_CONVERSION_ERROR",
     "HANDLER_ERROR",
     "FILTER_ERROR",
+    "INGESTION_ERROR",
     "FLOOD_WAIT",
     "ACCESS_FORBIDDEN",
     "CHANNEL_PRIVATE",
@@ -91,6 +92,15 @@ ShutdownReason = Literal[
 SleepFunc = Callable[[float], Awaitable[None]]
 HeartbeatSink = Callable[["MonitorHeartbeat"], Any]
 EventBuilderFactory = Callable[[tuple[int, ...]], Any]
+IngestionStatus = Literal[
+    "stored",
+    "duplicate",
+    "channel_not_registered",
+    "invalid_source_ref",
+    "invalid_message_id",
+    "empty_content",
+    "ingest_failed",
+]
 
 
 class MonitorRuntimeConfig(BaseModel):
@@ -158,6 +168,13 @@ class MonitorHeartbeat(BaseModel):
     events_seen_total: int
     events_matched_total: int
     events_rejected_total: int
+    ingest_attempt_total: int
+    ingest_stored_total: int
+    ingest_duplicate_total: int
+    ingest_rejected_total: int
+    ingest_failed_total: int
+    last_ingest_at: datetime | None
+    last_ingest_error_code: str | None
     conversion_error_total: int
     handler_error_total: int
     reconnect_attempt_total: int
@@ -177,6 +194,7 @@ class MonitorHeartbeat(BaseModel):
     notification_sent: Literal["no"] = "no"
     history_backfill_called: Literal["no"] = "no"
     raw_event_persisted: Literal["no"] = "no"
+    production_ingest_enabled: ReportFlag
     report_desensitized: Literal["yes"] = "yes"
 
 
@@ -195,6 +213,13 @@ class MonitorRuntimeSummary(BaseModel):
     events_seen_total: int
     events_matched_total: int
     events_rejected_total: int
+    ingest_attempt_total: int
+    ingest_stored_total: int
+    ingest_duplicate_total: int
+    ingest_rejected_total: int
+    ingest_failed_total: int
+    last_ingest_at: datetime | None
+    last_ingest_error_code: str | None
     dto_conversion_error_total: int
     handler_error_total: int
     filter_error_total: int
@@ -214,7 +239,7 @@ class MonitorRuntimeSummary(BaseModel):
     media_downloaded: Literal["no"] = "no"
     history_backfill_called: Literal["no"] = "no"
     raw_event_persisted: Literal["no"] = "no"
-    production_ingest_enabled: Literal["no"] = "no"
+    production_ingest_enabled: ReportFlag
     blockers: list[str]
     errors: list[MonitorRuntimeError]
 
@@ -222,6 +247,16 @@ class MonitorRuntimeSummary(BaseModel):
 class MonitorRuntimeClientFactory(Protocol):
     def __call__(self) -> TelegramClientLike:
         """Create a Telethon-compatible client without starting handlers."""
+
+
+class IngestionBoundaryResult(Protocol):
+    status: IngestionStatus
+    error_code: str | None
+
+
+class IncomingMessageIngestionBoundary(Protocol):
+    async def ingest_incoming(self, message: Any) -> IngestionBoundaryResult:
+        """Ingest one matched IncomingMessage through an application boundary."""
 
 
 class MonitorRuntime:
@@ -238,6 +273,7 @@ class MonitorRuntime:
         event_builder_factory: EventBuilderFactory | None = None,
         heartbeat_sink: HeartbeatSink | None = None,
         sleep: SleepFunc | None = None,
+        ingestion_boundary: IncomingMessageIngestionBoundary | None = None,
     ) -> None:
         self.watchlist = watchlist
         self.client = client
@@ -247,6 +283,7 @@ class MonitorRuntime:
         self.event_builder_factory = event_builder_factory
         self.heartbeat_sink = heartbeat_sink
         self.sleep = sleep or asyncio.sleep
+        self.ingestion_boundary = ingestion_boundary
 
         self.state: RuntimeState = "created"
         self.started_at: datetime | None = None
@@ -261,6 +298,11 @@ class MonitorRuntime:
         self.events_seen_total = 0
         self.events_matched_total = 0
         self.events_rejected_total = 0
+        self.ingest_attempt_total = 0
+        self.ingest_stored_total = 0
+        self.ingest_duplicate_total = 0
+        self.ingest_rejected_total = 0
+        self.ingest_failed_total = 0
         self.dto_conversion_error_total = 0
         self.handler_error_total = 0
         self.filter_error_total = 0
@@ -276,6 +318,8 @@ class MonitorRuntime:
         self.client_disconnected_cleanly = False
         self.backoff_seconds_current = 0.0
         self.shutdown_reason: ShutdownReason = "not_started"
+        self.last_ingest_at: datetime | None = None
+        self.last_ingest_error_code: str | None = None
 
         self._stop_requested = asyncio.Event()
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -464,6 +508,7 @@ class MonitorRuntime:
             if result.matched:
                 self.events_matched_total += 1
                 self.last_matched_event_at = self.last_event_at
+                await self._ingest_matched(incoming)
             else:
                 self.events_rejected_total += 1
         except ValueError:
@@ -484,6 +529,40 @@ class MonitorRuntime:
             )
         finally:
             self.inflight_handler_tasks -= 1
+
+    async def _ingest_matched(self, incoming: Any) -> None:
+        if self.ingestion_boundary is None:
+            return
+
+        self.ingest_attempt_total += 1
+        self.last_ingest_at = _utcnow()
+        try:
+            result = await self.ingestion_boundary.ingest_incoming(incoming)
+        except Exception:
+            self.ingest_failed_total += 1
+            self.handler_error_total += 1
+            self.last_ingest_error_code = "INGESTION_BOUNDARY_EXCEPTION"
+            self._record_error(
+                "INGESTION_ERROR",
+                phase="handler",
+                recoverability="transient",
+            )
+            return
+
+        status = result.status
+        error_code = result.error_code
+        if status == "stored":
+            self.ingest_stored_total += 1
+            self.last_ingest_error_code = None
+        elif status == "duplicate":
+            self.ingest_duplicate_total += 1
+            self.last_ingest_error_code = None
+        elif status == "ingest_failed":
+            self.ingest_failed_total += 1
+            self.last_ingest_error_code = error_code or "INGEST_FAILED"
+        else:
+            self.ingest_rejected_total += 1
+            self.last_ingest_error_code = error_code or status.upper()
 
     async def _wait_until_stop_or_disconnect(self) -> Literal["stop", "disconnect"]:
         waiters: list[asyncio.Task[Any]] = [
@@ -590,6 +669,13 @@ class MonitorRuntime:
             events_seen_total=self.events_seen_total,
             events_matched_total=self.events_matched_total,
             events_rejected_total=self.events_rejected_total,
+            ingest_attempt_total=self.ingest_attempt_total,
+            ingest_stored_total=self.ingest_stored_total,
+            ingest_duplicate_total=self.ingest_duplicate_total,
+            ingest_rejected_total=self.ingest_rejected_total,
+            ingest_failed_total=self.ingest_failed_total,
+            last_ingest_at=self.last_ingest_at,
+            last_ingest_error_code=self.last_ingest_error_code,
             conversion_error_total=self.dto_conversion_error_total,
             handler_error_total=self.handler_error_total,
             reconnect_attempt_total=self.reconnect_attempt_total,
@@ -604,6 +690,7 @@ class MonitorRuntime:
             liveness=self.health().liveness,
             readiness=self.health().readiness,
             heartbeat_total=self.heartbeat_total,
+            production_ingest_enabled=_flag(self.ingestion_boundary is not None),
         )
         if self.heartbeat_sink is not None:
             await _maybe_await(self.heartbeat_sink(heartbeat))
@@ -717,6 +804,13 @@ class MonitorRuntime:
             events_seen_total=self.events_seen_total,
             events_matched_total=self.events_matched_total,
             events_rejected_total=self.events_rejected_total,
+            ingest_attempt_total=self.ingest_attempt_total,
+            ingest_stored_total=self.ingest_stored_total,
+            ingest_duplicate_total=self.ingest_duplicate_total,
+            ingest_rejected_total=self.ingest_rejected_total,
+            ingest_failed_total=self.ingest_failed_total,
+            last_ingest_at=self.last_ingest_at,
+            last_ingest_error_code=self.last_ingest_error_code,
             dto_conversion_error_total=self.dto_conversion_error_total,
             handler_error_total=self.handler_error_total,
             filter_error_total=self.filter_error_total,
@@ -729,6 +823,7 @@ class MonitorRuntime:
                 self.client_disconnected_cleanly
             ),
             heartbeat_emitted=_flag(self.heartbeat_total > 0),
+            production_ingest_enabled=_flag(self.ingestion_boundary is not None),
             blockers=_dedupe_preserve_order(self._blockers),
             errors=list(self._errors),
         )
@@ -749,6 +844,7 @@ async def run_monitor_runtime_from_settings(
     client_factory: MonitorRuntimeClientFactory | None = None,
     heartbeat_sink: HeartbeatSink | None = None,
     event_builder_factory: EventBuilderFactory | None = None,
+    ingestion_boundary: IncomingMessageIngestionBoundary | None = None,
 ) -> MonitorRuntimeSummary:
     """Build and run P6-2D runtime from settings.
 
@@ -780,6 +876,7 @@ async def run_monitor_runtime_from_settings(
         config=config or MonitorRuntimeConfig.from_settings(resolved_settings),
         heartbeat_sink=heartbeat_sink,
         event_builder_factory=event_builder_factory,
+        ingestion_boundary=ingestion_boundary,
     )
     return await runtime.run()
 
@@ -821,6 +918,13 @@ def _failed_startup_summary(
         events_seen_total=0,
         events_matched_total=0,
         events_rejected_total=0,
+        ingest_attempt_total=0,
+        ingest_stored_total=0,
+        ingest_duplicate_total=0,
+        ingest_rejected_total=0,
+        ingest_failed_total=0,
+        last_ingest_at=None,
+        last_ingest_error_code=None,
         dto_conversion_error_total=0,
         handler_error_total=0,
         filter_error_total=0,
@@ -831,6 +935,7 @@ def _failed_startup_summary(
         handler_removed="no",
         client_disconnected_cleanly="no",
         heartbeat_emitted="no",
+        production_ingest_enabled="no",
         blockers=[error_code.casefold()],
         errors=[
             MonitorRuntimeError(

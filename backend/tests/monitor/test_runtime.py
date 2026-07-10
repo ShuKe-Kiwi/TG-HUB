@@ -34,6 +34,32 @@ class FakeNewMessageBuilder:
     chats: tuple[int, ...]
 
 
+@dataclass
+class FakeIngestionResult:
+    status: str
+    error_code: str | None = None
+
+
+class FakeIngestionBoundary:
+    def __init__(
+        self,
+        results: list[FakeIngestionResult] | None = None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.results = results or [FakeIngestionResult("stored")]
+        self.error = error
+        self.calls: list[Any] = []
+
+    async def ingest_incoming(self, message):
+        self.calls.append(message)
+        if self.error is not None:
+            raise self.error
+        if len(self.results) == 1:
+            return self.results[0]
+        return self.results.pop(0)
+
+
 class FakeRuntimeClient:
     def __init__(
         self,
@@ -169,6 +195,8 @@ async def test_runtime_registers_single_handler_and_stops_cleanly() -> None:
     assert summary.events_seen_total == 1
     assert summary.events_matched_total == 1
     assert summary.events_rejected_total == 0
+    assert summary.ingest_attempt_total == 0
+    assert summary.production_ingest_enabled == "no"
     assert summary.handler_removed == "yes"
     assert summary.client_disconnected_cleanly == "yes"
     assert summary.heartbeat_emitted == "yes"
@@ -304,3 +332,160 @@ async def test_runtime_records_dto_conversion_error_and_keeps_running() -> None:
     assert summary.dto_conversion_error_total == 1
     assert summary.handler_error_total == 1
     assert summary.errors[0].error_code == "DTO_CONVERSION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_runtime_handoff_ingests_only_matched_messages() -> None:
+    client = FakeRuntimeClient()
+    boundary = FakeIngestionBoundary([FakeIngestionResult("stored")])
+    heartbeats: list[MonitorHeartbeat] = []
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        heartbeat_sink=heartbeats.append,
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=boundary,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await asyncio.wait_for(_wait_for(lambda: len(heartbeats) >= 1), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="无关内容"))
+    )
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 更新"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert len(boundary.calls) == 1
+    assert boundary.calls[0].source_message_id == 2
+    assert summary.events_seen_total == 2
+    assert summary.events_matched_total == 1
+    assert summary.events_rejected_total == 1
+    assert summary.ingest_attempt_total == 1
+    assert summary.ingest_stored_total == 1
+    assert summary.ingest_duplicate_total == 0
+    assert summary.ingest_rejected_total == 0
+    assert summary.ingest_failed_total == 0
+    assert summary.production_ingest_enabled == "yes"
+    assert summary.database_accessed == "no"
+    assert summary.parser_called == "no"
+    assert summary.dedup_called == "no"
+    assert heartbeats[-1].production_ingest_enabled == "yes"
+
+
+@pytest.mark.asyncio
+async def test_runtime_handoff_counts_duplicate_and_rejected_results() -> None:
+    client = FakeRuntimeClient()
+    boundary = FakeIngestionBoundary(
+        [
+            FakeIngestionResult("duplicate"),
+            FakeIngestionResult(
+                "channel_not_registered",
+                "CHANNEL_TG_ID_NOT_FOUND",
+            ),
+        ]
+    )
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=boundary,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 B"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert len(boundary.calls) == 2
+    assert summary.ingest_attempt_total == 2
+    assert summary.ingest_stored_total == 0
+    assert summary.ingest_duplicate_total == 1
+    assert summary.ingest_rejected_total == 1
+    assert summary.ingest_failed_total == 0
+    assert summary.last_ingest_error_code == "CHANNEL_TG_ID_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_runtime_handoff_counts_ingest_failed_without_stopping() -> None:
+    client = FakeRuntimeClient()
+    boundary = FakeIngestionBoundary(
+        [FakeIngestionResult("ingest_failed", "RAW_MESSAGE_INGEST_ERROR")]
+    )
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=boundary,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 B"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert summary.final_state == "stopped"
+    assert summary.events_matched_total == 2
+    assert summary.ingest_attempt_total == 2
+    assert summary.ingest_failed_total == 2
+    assert summary.handler_error_total == 0
+    assert summary.last_ingest_error_code == "RAW_MESSAGE_INGEST_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_runtime_handoff_boundary_exception_does_not_stop_runtime() -> None:
+    client = FakeRuntimeClient()
+    boundary = FakeIngestionBoundary(error=RuntimeError("hidden internals"))
+    runtime = MonitorRuntime(
+        watchlist=_watchlist(),
+        client=client,
+        resolved_channel_ids=(-1001, -1002),
+        config=_runtime_config(),
+        event_builder_factory=_builder_factory,
+        ingestion_boundary=boundary,
+    )
+
+    task = asyncio.create_task(runtime.run())
+    await asyncio.wait_for(client.registered.wait(), timeout=1)
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+    )
+    await client.emit(
+        FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="无关内容"))
+    )
+    runtime.stop()
+    summary = await asyncio.wait_for(task, timeout=1)
+
+    assert summary.final_state == "stopped"
+    assert summary.events_seen_total == 2
+    assert summary.events_matched_total == 1
+    assert summary.events_rejected_total == 1
+    assert summary.ingest_attempt_total == 1
+    assert summary.ingest_failed_total == 1
+    assert summary.handler_error_total == 1
+    assert summary.errors[0].error_code == "INGESTION_ERROR"
+    assert "hidden internals" not in json.dumps(
+        summary.model_dump(mode="json"),
+        ensure_ascii=False,
+    )

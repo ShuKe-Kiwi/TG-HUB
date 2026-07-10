@@ -26,6 +26,41 @@
 | P6-2E-1 | RawMessage ingest disposition 前置改造 | ✅ 完成 | 8/8 |
 | P6-2E-2 | Telegram channel id canonical helper | ✅ 完成 | 8/8 |
 | P6-2E-3 | IncomingMessage ingestion boundary | ✅ 完成 | 9/9 |
+| P6-2E-4 | Monitor -> IngestionBoundary 受控 handoff | ✅ 完成 | 10/10 |
+
+---
+
+## P6-2E-4 详细记录
+
+### 完成日期
+2026-07-10
+
+### 实现内容
+
+- `MonitorRuntime` 新增可选 `ingestion_boundary`
+- 默认不启用生产入库 handoff
+- Monitor 只依赖 `IncomingMessageIngestionBoundary` 协议
+- filter matched 后才调用 `ingestion_boundary.ingest_incoming()`
+- filter rejected 不调用 ingestion boundary
+- draining / stop requested 后的事件仍不调用 ingestion boundary
+- ingestion `stored / duplicate / rejected / failed` 计数进入 summary / heartbeat
+- boundary 返回 `ingest_failed` 时 runtime 继续运行
+- boundary 抛异常时 runtime 继续运行，并记录稳定 `INGESTION_ERROR`
+- summary / heartbeat 增加 `production_ingest_enabled`
+
+**P6-2E-4 合计：10 个 monitor runtime 测试，全部通过**
+
+### 边界确认
+
+- ✅ Monitor runtime 未直接访问 DB
+- ✅ Monitor runtime 未创建 `AsyncSession`
+- ✅ Monitor runtime 未直接调用 Repository
+- ✅ Monitor runtime 未直接调用 `RawMessageService`
+- ✅ 未调用 Parser / Normalizer / Dedup
+- ✅ 未发布 EventBus
+- ✅ 未发送 Bot 通知
+- ✅ 未下载媒体或回溯历史消息
+- ✅ 未自动创建 Channel
 
 ---
 

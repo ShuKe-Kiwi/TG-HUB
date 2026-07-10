@@ -45,6 +45,7 @@ from app.modules.monitor.runtime_preflight import (
     run_runtime_preflight,
 )
 from app.modules.monitor.runtime import (
+    IncomingMessageIngestionBoundary,
     MonitorHealth,
     MonitorHeartbeat,
     MonitorRuntime,
@@ -64,6 +65,7 @@ __all__ = [
     "ChannelResolver",
     "CanonicalChannelIdResult",
     "IncomingMessageAdapter",
+    "IncomingMessageIngestionBoundary",
     "IncomingMessage",
     "MonitorDryRunEventReport",
     "MonitorDryRunReport",
