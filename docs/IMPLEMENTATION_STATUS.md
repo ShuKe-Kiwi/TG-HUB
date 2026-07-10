@@ -28,6 +28,53 @@
 | P6-2E-3 | IncomingMessage ingestion boundary | ✅ 完成 | 9/9 |
 | P6-2E-4 | Monitor -> IngestionBoundary 受控 handoff | ✅ 完成 | 10/10 |
 | P6-2F | RawMessage -> Parser / Normalizer / Dedup 编排 | ✅ 完成 | 20/20 |
+| P6-2G | EventBus / Bot 查询通知接入 | ✅ 完成 | 9/9 |
+
+---
+
+## P6-2G 详细记录
+
+### 完成日期
+2026-07-10
+
+### 实现内容
+
+- `RawMessageProcessingBoundary` 新增可选 `event_bus`
+- 默认 `event_bus=None`，保持 P6-2F 行为兼容
+- `RawMessageProcessingResult` 新增 `eventbus_enabled`
+- `eventbus_enabled` 只表示 boundary 实际持有 EventBus
+- dedup 路径将 EventBus 传给 `RawMessageService.dedup_and_persist()`
+- invalid / not found / parse_failed / already_processed 不触碰 EventBus
+- 支持一个 RawMessage 发布多个资源事件
+- `dedup_matched` 仅在新增 source/link 时产生 `ResourceMerged`
+- EventBus publish 失败不回滚已提交业务数据，并继续尝试后续事件
+- FastAPI lifespan 装配 `app.state.raw_message_processing_boundary`
+- Bot 查询链路继续作为既有能力回归，不参与通知链路
+
+**P6-2G 合计：9 个新增 EventBus / assembly 验收点，全部通过**
+
+### 边界确认
+
+- ✅ Processing boundary 只依赖 EventBus 抽象
+- ✅ Processing boundary 不依赖 Bot / FastAPI app / request
+- ✅ Bot handler 不反向调用 processing boundary
+- ✅ Monitor runtime 未改动
+- ✅ 未引入 Outbox / worker / retry
+- ✅ 未新增 Bot 命令
+- ✅ 未新增订阅模型
+- ✅ 未下载媒体或回溯历史消息
+- ❌ 未实现 P6-2H Monitor -> ingest -> process handoff
+- ❌ 未实现可靠通知 / 多实例通知语义
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/app/application/raw_message_processing.py` | P6-2G EventBus 注入与结果映射 |
+| `backend/app/application/schema.py` | 增加 `eventbus_enabled` |
+| `backend/app/main.py` | lifespan 装配 processing boundary |
+| `backend/tests/application/test_raw_message_processing.py` | P6-2G EventBus 验收测试 |
+| `backend/tests/test_mvp_b_p5e.py` | app assembly 验收测试 |
 
 ---
 

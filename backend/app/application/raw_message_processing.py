@@ -1,7 +1,7 @@
 """RawMessage processing application boundary.
 
-P6-2F coordinates existing RawMessage parser/dedup service methods without
-putting business processing inside monitor runtime.
+Coordinates existing RawMessage parser/dedup service methods without putting
+business processing inside monitor runtime.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from app.application.schema import (
     RawMessageProcessingStatus,
 )
 from app.database import async_session_factory
+from app.infra.eventbus import EventBus
 from app.modules.rawmessage.service import RawMessageService
 
 _FINAL_DEDUP_STATUSES = {"new", "matched", "skipped"}
@@ -54,9 +55,12 @@ class RawMessageProcessingBoundary:
         *,
         session_factory: SessionFactory = async_session_factory,
         raw_message_service_factory: RawMessageServiceFactory = RawMessageService,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._raw_message_service_factory = raw_message_service_factory
+        self._event_bus = event_bus
+        self._eventbus_enabled = event_bus is not None
 
     async def process_raw_message(
         self,
@@ -64,43 +68,52 @@ class RawMessageProcessingBoundary:
     ) -> RawMessageProcessingResult:
         parsed_id = _parse_raw_message_id(raw_message_id)
         if isinstance(parsed_id, RawMessageProcessingResult):
-            return parsed_id
+            return self._with_eventbus_state(parsed_id)
 
         async with self._session_factory() as session:
             service = self._raw_message_service_factory(session)
             raw_message = await self._load_raw_message(service, parsed_id)
             if isinstance(raw_message, RawMessageProcessingResult):
-                return raw_message
+                return self._with_eventbus_state(raw_message)
             if raw_message is None:
                 return _result(
                     status="raw_message_not_found",
                     raw_message_id=parsed_id,
                     error_code="RAW_MESSAGE_NOT_FOUND",
+                    eventbus_enabled=self._eventbus_enabled,
                 )
 
             action = _action_for_state(raw_message)
             if isinstance(action, RawMessageProcessingResult):
-                return _copy_state(action, raw_message_id=parsed_id, raw_message=raw_message)
+                return _copy_state(
+                    action,
+                    raw_message_id=parsed_id,
+                    raw_message=raw_message,
+                    eventbus_enabled=self._eventbus_enabled,
+                )
             if action == "already_processed":
                 return _result_from_raw_message(
                     raw_message,
                     status="already_processed",
+                    eventbus_enabled=self._eventbus_enabled,
                 )
             if action == "parse_failed":
                 return _result_from_raw_message(
                     raw_message,
                     status="parse_failed",
                     error_code="RAW_MESSAGE_PARSE_ERROR",
+                    eventbus_enabled=self._eventbus_enabled,
                 )
             if action == "parse":
                 parsed = await self._parse(service, parsed_id)
                 if isinstance(parsed, RawMessageProcessingResult):
-                    return parsed
+                    return self._with_eventbus_state(parsed)
                 if not _is_expected_raw_message(parsed, parsed_id):
                     return _result(
                         status="processing_failed",
                         raw_message_id=parsed_id,
                         error_code="INVALID_SERVICE_RESULT",
+                        eventbus_enabled=self._eventbus_enabled,
                     )
                 if _parse_status(parsed) == "parse_failed":
                     return _result_from_raw_message(
@@ -108,6 +121,7 @@ class RawMessageProcessingBoundary:
                         status="parse_failed",
                         error_code="RAW_MESSAGE_PARSE_ERROR",
                         parse_executed=True,
+                        eventbus_enabled=self._eventbus_enabled,
                     )
                 if (
                     _parse_status(parsed) != "parsed"
@@ -118,6 +132,7 @@ class RawMessageProcessingBoundary:
                         status="processing_failed",
                         error_code="INVALID_SERVICE_RESULT",
                         parse_executed=True,
+                        eventbus_enabled=self._eventbus_enabled,
                     )
                 return await self._dedup(
                     service,
@@ -192,7 +207,7 @@ class RawMessageProcessingBoundary:
         try:
             raw_message = await service.dedup_and_persist(
                 raw_message_id,
-                event_bus=None,
+                event_bus=self._event_bus,
             )
         except SQLAlchemyError:
             return _result(
@@ -201,6 +216,7 @@ class RawMessageProcessingBoundary:
                 error_code="DATABASE_ERROR",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
         except Exception:
             return _result(
@@ -209,6 +225,7 @@ class RawMessageProcessingBoundary:
                 error_code="RAW_MESSAGE_DEDUP_ERROR",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
 
         if not _is_expected_raw_message(raw_message, raw_message_id):
@@ -218,6 +235,7 @@ class RawMessageProcessingBoundary:
                 error_code="INVALID_SERVICE_RESULT",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
         if _parse_status(raw_message) != "parsed":
             return _result_from_raw_message(
@@ -226,6 +244,7 @@ class RawMessageProcessingBoundary:
                 error_code="INVALID_SERVICE_RESULT",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
 
         dedup_status = _dedup_status(raw_message)
@@ -235,6 +254,7 @@ class RawMessageProcessingBoundary:
                 status="dedup_new",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
         if dedup_status == "matched":
             return _result_from_raw_message(
@@ -242,6 +262,7 @@ class RawMessageProcessingBoundary:
                 status="dedup_matched",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
         if dedup_status == "skipped":
             return _result_from_raw_message(
@@ -249,6 +270,7 @@ class RawMessageProcessingBoundary:
                 status="dedup_skipped",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
         if dedup_status == "dedup_pending":
             return _result_from_raw_message(
@@ -257,6 +279,7 @@ class RawMessageProcessingBoundary:
                 error_code="RAW_MESSAGE_DEDUP_ERROR",
                 parse_executed=parse_executed,
                 dedup_executed=True,
+                eventbus_enabled=self._eventbus_enabled,
             )
 
         return _result_from_raw_message(
@@ -265,6 +288,17 @@ class RawMessageProcessingBoundary:
             error_code="INVALID_SERVICE_RESULT",
             parse_executed=parse_executed,
             dedup_executed=True,
+            eventbus_enabled=self._eventbus_enabled,
+        )
+
+    def _with_eventbus_state(
+        self,
+        result: RawMessageProcessingResult,
+    ) -> RawMessageProcessingResult:
+        if result.eventbus_enabled == self._eventbus_enabled:
+            return result
+        return result.model_copy(
+            update={"eventbus_enabled": self._eventbus_enabled}
         )
 
 
@@ -354,6 +388,7 @@ def _result_from_raw_message(
     error_code: RawMessageProcessingErrorCode | None = None,
     parse_executed: bool = False,
     dedup_executed: bool = False,
+    eventbus_enabled: bool = False,
 ) -> RawMessageProcessingResult:
     return _result(
         status=status,
@@ -365,6 +400,7 @@ def _result_from_raw_message(
         error_code=error_code,
         parse_executed=parse_executed,
         dedup_executed=dedup_executed,
+        eventbus_enabled=eventbus_enabled,
     )
 
 
@@ -373,6 +409,7 @@ def _copy_state(
     *,
     raw_message_id: int,
     raw_message: Any,
+    eventbus_enabled: bool,
 ) -> RawMessageProcessingResult:
     return result.model_copy(
         update={
@@ -381,6 +418,7 @@ def _copy_state(
             "dedup_status": _dedup_status(raw_message),
             "parse_attempts": _parse_attempts(raw_message),
             "parsed_resource_count": _parsed_resource_count(raw_message),
+            "eventbus_enabled": eventbus_enabled,
         }
     )
 
@@ -396,6 +434,7 @@ def _result(
     error_code: RawMessageProcessingErrorCode | None = None,
     parse_executed: bool = False,
     dedup_executed: bool = False,
+    eventbus_enabled: bool = False,
 ) -> RawMessageProcessingResult:
     return RawMessageProcessingResult(
         status=status,
@@ -407,4 +446,5 @@ def _result(
         error_code=error_code,
         parse_executed=parse_executed,
         dedup_executed=dedup_executed,
+        eventbus_enabled=eventbus_enabled,
     )

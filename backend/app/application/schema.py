@@ -30,7 +30,7 @@ RawMessageProcessingErrorCode = Literal[
 
 
 class RawMessageProcessingResult(BaseModel):
-    """Stable result for P6-2F RawMessage processing."""
+    """Stable result for RawMessage processing."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -43,3 +43,4 @@ class RawMessageProcessingResult(BaseModel):
     error_code: RawMessageProcessingErrorCode | None = None
     parse_executed: bool = False
     dedup_executed: bool = False
+    eventbus_enabled: bool = False

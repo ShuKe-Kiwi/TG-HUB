@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 
+from app.application import RawMessageProcessingBoundary
 from app.config import Settings
 from app.infra.events import RawMessageFailed
 from app.main import app as global_app
@@ -300,6 +301,22 @@ async def test_missing_secret_disables_webhook() -> None:
     assert webhook.status_code == 503
     assert fake_transport.messages == []
     assert fake_transport.closed is True
+
+
+@pytest.mark.asyncio
+async def test_lifespan_exposes_processing_boundary_with_event_bus() -> None:
+    application = create_app(
+        app_settings=_settings(secret=""),
+        session_factory=GuardSessionFactory(),  # type: ignore[arg-type]
+    )
+
+    async with application.router.lifespan_context(application):
+        boundary = application.state.raw_message_processing_boundary
+        result = await boundary.process_raw_message("invalid")
+
+    assert isinstance(boundary, RawMessageProcessingBoundary)
+    assert result.status == "invalid_raw_message_id"
+    assert result.eventbus_enabled is True
 
 
 @pytest.mark.asyncio

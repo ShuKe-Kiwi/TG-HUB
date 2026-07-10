@@ -6,6 +6,7 @@ import inspect
 import httpx
 from fastapi import FastAPI
 
+from app.application import RawMessageProcessingBoundary
 from app.config import Settings, settings
 from app.database import async_session_factory
 from app.infra.eventbus import InMemoryEventBus
@@ -75,6 +76,10 @@ def create_app(
     async def lifespan(app: FastAPI):
         event_bus = InMemoryEventBus()
         app.state.event_bus = event_bus
+        app.state.raw_message_processing_boundary = RawMessageProcessingBoundary(
+            session_factory=session_factory,
+            event_bus=event_bus,
+        )
 
         active_transport = bot_transport
         shutdown_transport = active_transport

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application import RawMessageProcessingBoundary
+from app.infra.events import DomainEvent, ResourceCreated, ResourceMerged
 from app.modules.channel.schema import ChannelCreate
 from app.modules.channel.service import ChannelService
 from app.modules.parser.dto import ParsedLink, ParsedResource
@@ -69,10 +70,28 @@ class FakeService:
         return self.dedup_result if self.dedup_result is not None else self.raw_message
 
 
-def _fake_boundary(service: FakeService) -> RawMessageProcessingBoundary:
+class RecordingEventBus:
+    def __init__(self, *, fail_first: bool = False) -> None:
+        self.events: list[DomainEvent] = []
+        self.attempts: list[DomainEvent] = []
+        self.fail_first = fail_first
+
+    async def publish(self, event: DomainEvent) -> None:
+        self.attempts.append(event)
+        if self.fail_first and len(self.attempts) == 1:
+            raise RuntimeError("simulated event publish failure")
+        self.events.append(event)
+
+
+def _fake_boundary(
+    service: FakeService,
+    *,
+    event_bus=None,
+) -> RawMessageProcessingBoundary:
     return RawMessageProcessingBoundary(
         session_factory=lambda: FakeSession(),
         raw_message_service_factory=lambda session: service,
+        event_bus=event_bus,
     )
 
 
@@ -126,6 +145,27 @@ async def _ingest_message(
     return result.raw_message
 
 
+def _parsed_resource(
+    *,
+    title: str,
+    raw_title: str,
+    provider: str,
+    url: str,
+) -> dict:
+    return ParsedResource(
+        title=title,
+        raw_title=raw_title,
+        resource_type="drama",
+        links=[
+            ParsedLink(
+                provider=provider,
+                original_text=url,
+                url=url,
+            )
+        ],
+    ).model_dump(mode="json")
+
+
 @pytest.mark.asyncio
 async def test_invalid_non_integer_id_does_not_open_session() -> None:
     session_factory = RaisingSessionFactory()
@@ -138,6 +178,7 @@ async def test_invalid_non_integer_id_does_not_open_session() -> None:
     assert result.raw_message_id is None
     assert result.parse_executed is False
     assert result.dedup_executed is False
+    assert result.eventbus_enabled is False
     assert session_factory.calls == 0
 
 
@@ -150,6 +191,7 @@ async def test_invalid_bool_id_is_rejected_without_opening_session() -> None:
 
     assert result.status == "invalid_raw_message_id"
     assert result.error_code == "RAW_MESSAGE_ID_NOT_INTEGER"
+    assert result.eventbus_enabled is False
     assert session_factory.calls == 0
 
 
@@ -162,6 +204,25 @@ async def test_invalid_non_positive_id_does_not_open_session() -> None:
 
     assert result.status == "invalid_raw_message_id"
     assert result.error_code == "RAW_MESSAGE_ID_NON_POSITIVE"
+    assert result.eventbus_enabled is False
+    assert session_factory.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_id_reports_injected_event_bus_without_opening_session() -> None:
+    session_factory = RaisingSessionFactory()
+    event_bus = RecordingEventBus()
+    boundary = RawMessageProcessingBoundary(
+        session_factory=session_factory,
+        event_bus=event_bus,
+    )
+
+    result = await boundary.process_raw_message("abc")
+
+    assert result.status == "invalid_raw_message_id"
+    assert result.error_code == "RAW_MESSAGE_ID_NOT_INTEGER"
+    assert result.eventbus_enabled is True
+    assert event_bus.attempts == []
     assert session_factory.calls == 0
 
 
@@ -181,6 +242,7 @@ async def test_strip_string_id_is_allowed(db_session: AsyncSession) -> None:
     assert result.status == "dedup_new"
     assert result.parse_executed is True
     assert result.dedup_executed is True
+    assert result.eventbus_enabled is False
 
 
 @pytest.mark.asyncio
@@ -219,6 +281,7 @@ async def test_parse_pending_success_runs_parse_and_dedup(
     assert result.parsed_resource_count == 1
     assert result.parse_executed is True
     assert result.dedup_executed is True
+    assert result.eventbus_enabled is False
 
     resources = (await db_session.execute(select(Resource))).scalars().all()
     sources = (await db_session.execute(select(ResourceSource))).scalars().all()
@@ -369,6 +432,31 @@ async def test_dedup_exception_maps_to_dedup_failed() -> None:
     assert result.error_code == "RAW_MESSAGE_DEDUP_ERROR"
     assert result.dedup_executed is True
     assert service.event_bus_values == [None]
+    assert result.eventbus_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_injected_event_bus_is_passed_only_to_dedup_path() -> None:
+    event_bus = RecordingEventBus()
+    raw_message = _fake_raw_message(
+        parse_status="parsed",
+        dedup_status="dedup_pending",
+        parsed_data=[{"title": "家业"}],
+    )
+    done = _fake_raw_message(
+        raw_message_id=raw_message.id,
+        parse_status="parsed",
+        dedup_status="new",
+        parsed_data=raw_message.parsed_data,
+    )
+    service = FakeService(raw_message, dedup_result=done)
+    boundary = _fake_boundary(service, event_bus=event_bus)
+
+    result = await boundary.process_raw_message(raw_message.id)
+
+    assert result.status == "dedup_new"
+    assert result.eventbus_enabled is True
+    assert service.event_bus_values == [event_bus]
 
 
 @pytest.mark.asyncio
@@ -535,8 +623,220 @@ async def test_multi_resource_message_processes_without_created_count(
 
     assert result.status == "dedup_new"
     assert result.parsed_resource_count == 2
+    assert result.eventbus_enabled is False
     assert not hasattr(result, "resource_created_count")
     assert not hasattr(result, "resource_merged_count")
+
+
+@pytest.mark.asyncio
+async def test_event_bus_publishes_resource_created_from_boundary(
+    db_session: AsyncSession,
+) -> None:
+    raw_message = await _ingest_message(
+        db_session,
+        raw_text="【家业】第7集 夸克 https://pan.quark.cn/s/p6g001",
+        channel_tg_id=92001,
+        tg_message_id=92001,
+    )
+    event_bus = RecordingEventBus()
+    boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+        event_bus=event_bus,
+    )
+
+    result = await boundary.process_raw_message(raw_message.id)
+
+    assert result.status == "dedup_new"
+    assert result.eventbus_enabled is True
+    assert len(event_bus.events) == 1
+    assert isinstance(event_bus.events[0], ResourceCreated)
+    assert event_bus.events[0].raw_message_id == raw_message.id
+
+
+@pytest.mark.asyncio
+async def test_one_raw_message_can_publish_multiple_created_events(
+    db_session: AsyncSession,
+) -> None:
+    raw_message = await _ingest_message(
+        db_session,
+        raw_text="manual multi event",
+        channel_tg_id=92002,
+        tg_message_id=92002,
+    )
+    raw_message.parse_status = "parsed"
+    raw_message.dedup_status = "dedup_pending"
+    raw_message.parsed_data = [
+        _parsed_resource(
+            title="家业",
+            raw_title="家业 第8集",
+            provider="quark",
+            url="https://pan.quark.cn/s/p6g002a",
+        ),
+        _parsed_resource(
+            title="凡人修仙传",
+            raw_title="凡人修仙传 第9集",
+            provider="baidu",
+            url="https://pan.baidu.com/s/p6g002b",
+        ),
+    ]
+    await db_session.commit()
+    event_bus = RecordingEventBus()
+    boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+        event_bus=event_bus,
+    )
+
+    result = await boundary.process_raw_message(raw_message.id)
+
+    assert result.status == "dedup_new"
+    assert result.parsed_resource_count == 2
+    assert len(event_bus.events) == 2
+    assert all(isinstance(event, ResourceCreated) for event in event_bus.events)
+
+
+@pytest.mark.asyncio
+async def test_matched_with_new_source_publishes_resource_merged(
+    db_session: AsyncSession,
+) -> None:
+    first = await _ingest_message(
+        db_session,
+        raw_text="【家业】第10集 夸克 https://pan.quark.cn/s/p6g003a",
+        channel_tg_id=92003,
+        tg_message_id=92003,
+    )
+    second = await _ingest_message(
+        db_session,
+        raw_text="【家业】第10集 百度 https://pan.baidu.com/s/p6g003b",
+        channel_tg_id=92004,
+        tg_message_id=92004,
+    )
+    first_boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+    )
+    await first_boundary.process_raw_message(first.id)
+    event_bus = RecordingEventBus()
+    second_boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+        event_bus=event_bus,
+    )
+
+    result = await second_boundary.process_raw_message(second.id)
+
+    assert result.status == "dedup_matched"
+    assert result.eventbus_enabled is True
+    assert len(event_bus.events) == 1
+    assert isinstance(event_bus.events[0], ResourceMerged)
+    assert event_bus.events[0].raw_message_id == second.id
+
+
+@pytest.mark.asyncio
+async def test_matched_without_new_source_or_link_publishes_no_event(
+    db_session: AsyncSession,
+) -> None:
+    raw_message = await _ingest_message(
+        db_session,
+        raw_text="【家业】第11集 夸克 https://pan.quark.cn/s/p6g004",
+        channel_tg_id=92005,
+        tg_message_id=92005,
+    )
+    setup_boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+    )
+    setup = await setup_boundary.process_raw_message(raw_message.id)
+    assert setup.status == "dedup_new"
+
+    async with _session_factory(db_session)() as session:
+        persisted = await RawMessageService(session).get_by_id(raw_message.id)
+        assert persisted is not None
+        persisted.dedup_status = "dedup_pending"
+        await session.commit()
+
+    event_bus = RecordingEventBus()
+    boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+        event_bus=event_bus,
+    )
+
+    result = await boundary.process_raw_message(raw_message.id)
+
+    assert result.status == "dedup_matched"
+    assert result.eventbus_enabled is True
+    assert event_bus.events == []
+    assert event_bus.attempts == []
+
+
+@pytest.mark.asyncio
+async def test_already_processed_does_not_replay_event(
+    db_session: AsyncSession,
+) -> None:
+    raw_message = await _ingest_message(
+        db_session,
+        raw_text="【家业】第12集 夸克 https://pan.quark.cn/s/p6g005",
+        channel_tg_id=92006,
+        tg_message_id=92006,
+    )
+    setup_boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+    )
+    setup = await setup_boundary.process_raw_message(raw_message.id)
+    assert setup.status == "dedup_new"
+    event_bus = RecordingEventBus()
+    boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+        event_bus=event_bus,
+    )
+
+    result = await boundary.process_raw_message(raw_message.id)
+
+    assert result.status == "already_processed"
+    assert result.eventbus_enabled is True
+    assert event_bus.attempts == []
+
+
+@pytest.mark.asyncio
+async def test_event_publish_failure_does_not_rollback_and_continues_events(
+    db_session: AsyncSession,
+) -> None:
+    raw_message = await _ingest_message(
+        db_session,
+        raw_text="manual publish failure",
+        channel_tg_id=92007,
+        tg_message_id=92007,
+    )
+    raw_message.parse_status = "parsed"
+    raw_message.dedup_status = "dedup_pending"
+    raw_message.parsed_data = [
+        _parsed_resource(
+            title="家业",
+            raw_title="家业 第13集",
+            provider="quark",
+            url="https://pan.quark.cn/s/p6g006a",
+        ),
+        _parsed_resource(
+            title="凡人修仙传",
+            raw_title="凡人修仙传 第14集",
+            provider="baidu",
+            url="https://pan.baidu.com/s/p6g006b",
+        ),
+    ]
+    await db_session.commit()
+    event_bus = RecordingEventBus(fail_first=True)
+    boundary = RawMessageProcessingBoundary(
+        session_factory=_session_factory(db_session),
+        event_bus=event_bus,
+    )
+
+    result = await boundary.process_raw_message(raw_message.id)
+
+    assert result.status == "dedup_new"
+    assert result.dedup_status == "new"
+    assert result.eventbus_enabled is True
+    assert len(event_bus.attempts) == 2
+    assert len(event_bus.events) == 1
+    async with _session_factory(db_session)() as session:
+        persisted = await RawMessageService(session).get_by_id(raw_message.id)
+        assert persisted is not None
+        assert persisted.dedup_status == "new"
 
 
 @pytest.mark.asyncio
@@ -562,5 +862,8 @@ async def test_result_does_not_expose_runtime_observation_fields(
     assert "normalizer_called" not in payload
     assert "dedup_called" not in payload
     assert "eventbus_published" not in payload
+    assert "event_count" not in payload
     assert "notification_sent" not in payload
+    assert "notification_count" not in payload
     assert "media_downloaded" not in payload
+    assert payload["eventbus_enabled"] is False
