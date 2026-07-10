@@ -27,6 +27,53 @@
 | P6-2E-2 | Telegram channel id canonical helper | ✅ 完成 | 8/8 |
 | P6-2E-3 | IncomingMessage ingestion boundary | ✅ 完成 | 9/9 |
 | P6-2E-4 | Monitor -> IngestionBoundary 受控 handoff | ✅ 完成 | 10/10 |
+| P6-2F | RawMessage -> Parser / Normalizer / Dedup 编排 | ✅ 完成 | 20/20 |
+
+---
+
+## P6-2F 详细记录
+
+### 完成日期
+2026-07-10
+
+### 实现内容
+
+- 新增 `RawMessageProcessingBoundary`
+- 新增稳定结果 DTO `RawMessageProcessingResult`
+- application boundary 自己拥有 session lifecycle
+- 固定入口 `process_raw_message(raw_message_id)`
+- `raw_message_id` 支持 `int` 或可 strip 后转换的字符串
+- `bool`、非整数、非正数在打开 DB session 前拒绝
+- `parse_pending + dedup_pending` 执行 parse 后再 dedup
+- `parsed + dedup_pending` 只执行 dedup
+- `parsed + new/matched/skipped` 返回 `already_processed`
+- `parse_failed + dedup_pending` 不自动重试，返回 `parse_failed`
+- 非法状态组合返回稳定 `RAW_MESSAGE_INVALID_STATE`
+- `dedup_and_persist()` 固定传入 `event_bus=None`
+- service 异常与非法返回映射为稳定 `status / error_code`
+- 结果只暴露生产 DTO 字段，不暴露 report-only 计数字段
+
+**P6-2F 合计：20 个 application boundary 测试，全部通过**
+
+### 边界确认
+
+- ✅ Monitor runtime 未接 Parser / Normalizer / Dedup
+- ✅ Monitor runtime 未直接调用 `RawMessageProcessingBoundary`
+- ✅ 未引入 worker / queue / retry
+- ✅ 未发布 EventBus
+- ✅ 未发送 Bot 通知
+- ✅ 未下载媒体或回溯历史消息
+- ✅ 未新增资源创建/合并统计到生产 DTO
+- ❌ 未实现 P6-2G EventBus / Bot 查询通知接入
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `backend/app/application/raw_message_processing.py` | P6-2F RawMessage 后处理应用边界 |
+| `backend/app/application/schema.py` | P6-2F 结果 DTO |
+| `backend/app/application/__init__.py` | application boundary 导出 |
+| `backend/tests/application/test_raw_message_processing.py` | P6-2F 编排测试 |
 
 ---
 
