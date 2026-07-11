@@ -2,9 +2,11 @@
 
 from contextlib import asynccontextmanager
 import inspect
+import secrets
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 
 from app.application import RawMessageProcessingBoundary
 from app.config import Settings, settings
@@ -13,6 +15,13 @@ from app.infra.eventbus import InMemoryEventBus
 from app.infra.events import ResourceCreated, ResourceMerged
 from app.infra.logger import get_logger
 from app.infra.logger import setup_logging
+from app.modules.admin import (
+    AdminApiError,
+    admin_error_handler,
+    admin_request_validation_handler,
+    guard_admin_request,
+    router as admin_router,
+)
 from app.modules.bot.handlers import ResourceNotifyHandler
 from app.modules.bot.router import (
     SessionFactory,
@@ -25,6 +34,8 @@ from app.modules.bot.transport import (
     TelegramConfigurationError,
 )
 from app.modules.resource.query_service import ResourceQueryService
+from app.modules.monitor.control import MonitorControlService
+from app.modules.monitor.watchlist_service import WatchlistApplicationService
 
 setup_logging()
 
@@ -69,6 +80,9 @@ def create_app(
     app_settings: Settings | None = None,
     bot_transport: BotTransport | None = None,
     session_factory: SessionFactory = async_session_factory,
+    watchlist_service: WatchlistApplicationService | None = None,
+    monitor_control_service: MonitorControlService | None = None,
+    admin_csrf_token: str | None = None,
 ) -> FastAPI:
     resolved_settings = app_settings or settings
 
@@ -79,6 +93,21 @@ def create_app(
         app.state.raw_message_processing_boundary = RawMessageProcessingBoundary(
             session_factory=session_factory,
             event_bus=event_bus,
+        )
+        active_watchlist_service = (
+            watchlist_service or WatchlistApplicationService(resolved_settings)
+        )
+        active_monitor_control = (
+            monitor_control_service
+            or MonitorControlService(
+                resolved_settings,
+                watchlist_service=active_watchlist_service,
+            )
+        )
+        app.state.watchlist_service = active_watchlist_service
+        app.state.monitor_control_service = active_monitor_control
+        app.state.admin_csrf_token = (
+            admin_csrf_token or secrets.token_urlsafe(32)
         )
 
         active_transport = bot_transport
@@ -158,6 +187,7 @@ def create_app(
         try:
             yield
         finally:
+            await active_monitor_control.shutdown()
             await _close_if_supported(shutdown_transport)
             if owned_http_client is not None:
                 await owned_http_client.aclose()
@@ -169,6 +199,53 @@ def create_app(
         lifespan=lifespan,
     )
     application.include_router(telegram_router)
+    application.include_router(admin_router)
+    application.add_exception_handler(AdminApiError, admin_error_handler)
+    application.add_exception_handler(
+        RequestValidationError,
+        admin_request_validation_handler,
+    )
+
+    @application.middleware("http")
+    async def admin_response_boundary(request: Request, call_next):
+        is_admin = request.url.path.startswith("/api/admin/v1")
+        if is_admin:
+            request.state.admin_request_id = secrets.token_hex(12)
+            try:
+                guard_admin_request(request)
+            except AdminApiError as exc:
+                response = await admin_error_handler(request, exc)
+                response.headers["X-Request-ID"] = (
+                    request.state.admin_request_id
+                )
+                return response
+        try:
+            response = await call_next(request)
+        except Exception:
+            if not is_admin:
+                raise
+            logger.error(
+                "Admin API request failed request_id=%s "
+                "error_code=ADMIN_INTERNAL_ERROR",
+                request.state.admin_request_id,
+            )
+            response = await admin_error_handler(
+                request,
+                AdminApiError("ADMIN_INTERNAL_ERROR", 500),
+            )
+        if is_admin and response.status_code in {404, 405}:
+            response = await admin_error_handler(
+                request,
+                AdminApiError("INVALID_REQUEST", response.status_code),
+            )
+        if is_admin:
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Request-ID"] = getattr(
+                request.state,
+                "admin_request_id",
+                "unavailable",
+            )
+        return response
 
     @application.get("/health")
     async def health() -> dict[str, str]:
