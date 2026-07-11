@@ -446,16 +446,38 @@ cd /Users/kiwishook/nova_projects/tg-hub/backend
 
 Bot 通知只有在 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_NOTIFY_CHAT_IDS` 同时有效时启用。缺少 Bot 配置不会阻止 monitor 启动；summary 会显示 `disabled_config_missing`。
 
-频道和资源名仍通过 `watchlist.json` 管理，可视化管理台属于后续阶段。
+频道和资源名仍以 `watchlist.json` 为事实来源，也可以通过本机可视化管理台安全编辑。
 
-## 15. 启动 FastAPI 应用
+## 15. 启动可视化管理台与 FastAPI
 
-如果只需要启动 API 服务：
+管理台只允许本机访问。启动时必须绑定 loopback：
 
 ```bash
 cd /Users/kiwishook/nova_projects/tg-hub/backend
-./.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+./.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:8000/admin/
+```
+
+管理台提供：
+
+- Monitor 状态、运行统计、最近错误和 static preflight
+- 受控启动与优雅停止
+- `source_channels` 增删改、启停和本地引用分类
+- `watch_titles` 与 aliases 增删改、启停和冲突校验
+- watchlist revision 冲突提示与 missing/invalid 文件显式恢复
+
+Web 管理台和 CLI 是两种互斥的 runtime owner。使用管理台启动 Monitor 时，不要同时执行：
+
+```bash
+./.venv/bin/python -m app.modules.monitor.cli run
+```
+
+管理台不提供远程访问认证，不能把服务绑定到 `0.0.0.0` 或直接暴露到局域网/公网。
 
 健康检查：
 

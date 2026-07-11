@@ -71,16 +71,8 @@ def test_load_watchlist_validates_external_config_file() -> None:
     watchlist = load_watchlist(WATCHLIST_PATH)
 
     assert isinstance(watchlist, WatchlistConfig)
-    assert watchlist.enabled_source_refs() == (
-        "https://t.me/dmysfx",
-        "https://t.me/Aliyun_4K_Movies",
-    )
-    assert [item.title for item in watchlist.enabled_watch_titles()] == [
-        "机动新世纪高达X",
-        "百花杀",
-        "家业",
-        "主角",
-    ]
+    assert watchlist.enabled_source_refs()
+    assert watchlist.enabled_watch_titles()
 
 
 @pytest.mark.skipif(

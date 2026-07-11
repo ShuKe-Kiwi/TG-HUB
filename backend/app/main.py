@@ -7,6 +7,7 @@ import secrets
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 
 from app.application import RawMessageProcessingBoundary
 from app.config import Settings, settings
@@ -20,7 +21,9 @@ from app.modules.admin import (
     admin_error_handler,
     admin_request_validation_handler,
     guard_admin_request,
+    pages_router as admin_pages_router,
     router as admin_router,
+    static_directory as admin_static_directory,
 )
 from app.modules.bot.handlers import ResourceNotifyHandler
 from app.modules.bot.router import (
@@ -199,6 +202,12 @@ def create_app(
         lifespan=lifespan,
     )
     application.include_router(telegram_router)
+    application.mount(
+        "/admin/static",
+        StaticFiles(directory=admin_static_directory),
+        name="admin_static",
+    )
+    application.include_router(admin_pages_router)
     application.include_router(admin_router)
     application.add_exception_handler(AdminApiError, admin_error_handler)
     application.add_exception_handler(
@@ -208,7 +217,11 @@ def create_app(
 
     @application.middleware("http")
     async def admin_response_boundary(request: Request, call_next):
-        is_admin = request.url.path.startswith("/api/admin/v1")
+        is_admin = (
+            request.url.path.startswith("/api/admin/v1")
+            or request.url.path == "/admin"
+            or request.url.path.startswith("/admin/")
+        )
         if is_admin:
             request.state.admin_request_id = secrets.token_hex(12)
             try:

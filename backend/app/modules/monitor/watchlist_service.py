@@ -12,6 +12,7 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -114,6 +115,7 @@ class WatchlistApplicationService:
             )
 
         errors.extend(_validate_title_name_uniqueness(config))
+        errors.extend(_validate_source_ref_uniqueness(config))
         return WatchlistValidationResult(
             valid=not errors,
             config=config if not errors else None,
@@ -153,9 +155,13 @@ class WatchlistApplicationService:
                     "invalid", "WATCHLIST_SCHEMA_INVALID"
                 )
             config = WatchlistConfig.model_validate(raw)
-            if _validate_title_name_uniqueness(config):
-                return _empty_snapshot(
-                    "invalid", "WATCHLIST_SCHEMA_INVALID"
+            if (
+                _validate_title_name_uniqueness(config)
+                or _validate_source_ref_uniqueness(config)
+            ):
+                return _invalid_snapshot_for_config(
+                    config,
+                    "WATCHLIST_SCHEMA_INVALID",
                 )
         except (OSError, UnicodeError, json.JSONDecodeError, ValidationError):
             return _empty_snapshot("invalid", "WATCHLIST_SCHEMA_INVALID")
@@ -304,6 +310,22 @@ def _snapshot_for_config(config: WatchlistConfig) -> WatchlistSnapshot:
     )
 
 
+def _invalid_snapshot_for_config(
+    config: WatchlistConfig,
+    error_code: WatchlistErrorCode,
+) -> WatchlistSnapshot:
+    return WatchlistSnapshot(
+        status="invalid",
+        revision=None,
+        config=config,
+        source_channel_count=len(config.source_channels),
+        watch_title_count=len(config.watch_titles),
+        enabled_source_channel_count=len(config.enabled_source_refs()),
+        enabled_watch_title_count=len(config.enabled_watch_titles()),
+        error_code=error_code,
+    )
+
+
 def _canonical_bytes(config: WatchlistConfig) -> bytes:
     value = json.dumps(
         config.model_dump(mode="json"),
@@ -371,6 +393,39 @@ def _validate_title_name_uniqueness(
             else:
                 owners[normalized] = owner
     return errors
+
+
+def _validate_source_ref_uniqueness(
+    config: WatchlistConfig,
+) -> list[str]:
+    errors: list[str] = []
+    owners: dict[str, int] = {}
+    for index, item in enumerate(config.source_channels):
+        normalized = _normalized_source_ref(item.ref)
+        previous = owners.get(normalized)
+        if previous is not None:
+            errors.append(f"duplicate_source_ref:{previous}:{index}")
+        else:
+            owners[normalized] = index
+    return errors
+
+
+def _normalized_source_ref(value: str) -> str:
+    ref = unicodedata.normalize("NFKC", value.strip())
+    if ref.startswith("@"):
+        return f"username:{ref[1:].casefold()}"
+    if ref.lstrip("-").isdigit():
+        try:
+            return f"numeric:{int(ref)}"
+        except ValueError:
+            pass
+
+    parsed = urlparse(ref)
+    if parsed.hostname and parsed.hostname.casefold() in {"t.me", "www.t.me"}:
+        parts = [part for part in parsed.path.split("/") if part]
+        if parts:
+            return f"username:{parts[0].casefold()}"
+    return f"raw:{ref.casefold()}"
 
 
 def _fsync_directory(path: Path) -> None:

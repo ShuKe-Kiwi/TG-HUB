@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="tg-hub-csrf" content="{{ csrf_token }}">
+    <link rel="icon" href="data:,">
+    <title>{{ title }} · tg-hub</title>
+    <link rel="stylesheet" href="{{ url_for('admin_static', path='/admin.css') }}">
+    <script type="module" src="{{ url_for('admin_static', path='/admin.js') }}"></script>
+  </head>
+  <body data-page="{{ page }}">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <a class="brand" href="/admin/" aria-label="tg-hub 管理台">
+          <span class="brand-mark" aria-hidden="true">tg</span>
+          <span>tg-hub</span>
+        </a>
+        <nav class="nav-list">
+          <a class="nav-link{% if page == 'overview' %} active{% endif %}" href="/admin/">
+            <span class="nav-icon" aria-hidden="true">◫</span>
+            <span>概览</span>
+          </a>
+          <a class="nav-link{% if page == 'watchlist' %} active{% endif %}" href="/admin/watchlist">
+            <span class="nav-icon" aria-hidden="true">☷</span>
+            <span>监听配置</span>
+          </a>
+        </nav>
+        <p class="local-note">仅限本机访问</p>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">TG-HUB CONTROL</p>
+            <h1>{% block heading %}{{ title }}{% endblock %}</h1>
+          </div>
+          <div class="topbar-status" aria-live="polite">
+            <span id="global-status-dot" class="status-dot neutral"></span>
+            <span id="global-status-text">正在连接管理服务</span>
+            <span class="divider" aria-hidden="true"></span>
+            <span id="last-refresh">尚未刷新</span>
+          </div>
+        </header>
+
+        <div id="page-alert" class="page-alert hidden" role="alert"></div>
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <dialog id="confirm-dialog" class="dialog confirm-dialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">确认操作</p>
+            <h2 id="confirm-title">请确认</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭" title="关闭">×</button>
+        </div>
+        <p id="confirm-message" class="dialog-message"></p>
+        <div class="dialog-actions">
+          <button class="button secondary" value="cancel">取消</button>
+          <button id="confirm-action" class="button danger" value="confirm">确认</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

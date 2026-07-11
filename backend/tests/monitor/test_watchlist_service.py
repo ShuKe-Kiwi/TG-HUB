@@ -85,6 +85,7 @@ async def test_snapshot_treats_empty_alias_as_invalid(tmp_path: Path) -> None:
 
     assert snapshot.status == "invalid"
     assert snapshot.revision is None
+    assert snapshot.config is None
 
 
 def test_validation_rejects_empty_alias_before_model_normalization(tmp_path: Path) -> None:
@@ -115,6 +116,40 @@ def test_validation_uses_global_nfkc_casefold_name_uniqueness(tmp_path: Path) ->
 
     assert result.valid is False
     assert result.errors[0].startswith("duplicate_watch_name:")
+
+
+def test_validation_rejects_semantically_duplicate_source_refs(tmp_path: Path) -> None:
+    candidate = _candidate()
+    candidate["source_channels"] = [
+        {"ref": "https://t.me/Aliyun_4K_Movies", "enabled": True},
+        {"ref": "@aliyun_4k_movies", "enabled": False},
+    ]
+
+    result = WatchlistApplicationService(
+        path=tmp_path / "watchlist.json"
+    ).validate(candidate)
+
+    assert result.valid is False
+    assert result.errors == ["duplicate_source_ref:0:1"]
+
+
+async def test_snapshot_treats_duplicate_source_refs_as_invalid(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "watchlist.json"
+    candidate = _candidate()
+    candidate["source_channels"] = [
+        {"ref": "https://t.me/example", "enabled": True},
+        {"ref": "https://www.t.me/EXAMPLE/", "enabled": True},
+    ]
+    _write(path, candidate)
+
+    snapshot = await WatchlistApplicationService(path=path).get_snapshot()
+
+    assert snapshot.status == "invalid"
+    assert snapshot.revision is None
+    assert snapshot.config is not None
+    assert len(snapshot.config.source_channels) == 2
 
 
 async def test_replace_preserves_existing_mode_and_updates_revision(tmp_path: Path) -> None:

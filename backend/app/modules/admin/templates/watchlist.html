@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block heading %}监听配置{% endblock %}
+
+{% block content %}
+<section class="config-toolbar" aria-label="配置操作">
+  <div>
+    <p id="config-summary" class="section-meta">正在读取 watchlist</p>
+    <p id="revision-label" class="revision-label">revision: --</p>
+  </div>
+  <div class="action-row">
+    <button id="reload-watchlist" class="icon-button bordered" title="重新加载" aria-label="重新加载">↻</button>
+    <button id="save-watchlist" class="button primary" disabled>
+      <span aria-hidden="true">✓</span><span>保存更改</span>
+    </button>
+  </div>
+</section>
+
+<div id="watchlist-warning" class="inline-notice warning hidden"></div>
+
+<section class="section-block config-section">
+  <div class="tabs" role="tablist" aria-label="监听配置类型">
+    <button id="channels-tab" class="tab active" role="tab" aria-selected="true" aria-controls="channels-panel">监听频道 <span id="channel-count" class="count">0</span></button>
+    <button id="titles-tab" class="tab" role="tab" aria-selected="false" aria-controls="titles-panel">关注资源名 <span id="title-count" class="count">0</span></button>
+  </div>
+
+  <div id="channels-panel" class="tab-panel" role="tabpanel" aria-labelledby="channels-tab">
+    <div class="panel-toolbar">
+      <div><h2>监听频道</h2></div>
+      <button class="button secondary" data-add="channel"><span aria-hidden="true">＋</span><span>添加频道</span></button>
+    </div>
+    <div class="table-frame">
+      <table>
+        <thead><tr><th>频道引用</th><th>输入类型</th><th>状态</th><th class="actions-column">操作</th></tr></thead>
+        <tbody id="channel-list"><tr><td colspan="4" class="empty-cell">正在加载</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="titles-panel" class="tab-panel hidden" role="tabpanel" aria-labelledby="titles-tab">
+    <div class="panel-toolbar">
+      <div><h2>关注资源名</h2></div>
+      <button class="button secondary" data-add="title"><span aria-hidden="true">＋</span><span>添加资源名</span></button>
+    </div>
+    <div class="table-frame">
+      <table>
+        <thead><tr><th>资源标题</th><th>Aliases</th><th>状态</th><th class="actions-column">操作</th></tr></thead>
+        <tbody id="title-list"><tr><td colspan="4" class="empty-cell">正在加载</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<dialog id="channel-dialog" class="dialog editor-dialog">
+  <form id="channel-form">
+    <div class="dialog-header">
+      <div><p class="eyebrow">SOURCE CHANNEL</p><h2 id="channel-dialog-title">添加频道</h2></div>
+      <button type="button" class="icon-button" data-close-dialog="channel-dialog" aria-label="关闭" title="关闭">×</button>
+    </div>
+    <input id="channel-index" type="hidden">
+    <label class="field"><span>频道引用</span><input id="channel-ref" name="ref" autocomplete="off" placeholder="@channel 或 https://t.me/channel" required><small id="channel-error" class="field-error"></small></label>
+    <label class="toggle-row"><input id="channel-enabled" type="checkbox" checked><span class="toggle"></span><span>启用监听</span></label>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close-dialog="channel-dialog">取消</button><button class="button primary" type="submit">应用</button></div>
+  </form>
+</dialog>
+
+<dialog id="title-dialog" class="dialog editor-dialog">
+  <form id="title-form">
+    <div class="dialog-header">
+      <div><p class="eyebrow">WATCH TITLE</p><h2 id="title-dialog-title">添加资源名</h2></div>
+      <button type="button" class="icon-button" data-close-dialog="title-dialog" aria-label="关闭" title="关闭">×</button>
+    </div>
+    <input id="title-index" type="hidden">
+    <label class="field"><span>资源标题</span><input id="watch-title" name="title" autocomplete="off" placeholder="例如：家业" required><small id="title-error" class="field-error"></small></label>
+    <label class="field"><span>Aliases</span><textarea id="watch-aliases" rows="5" placeholder="每行一个别名"></textarea><small id="alias-error" class="field-error"></small></label>
+    <label class="toggle-row"><input id="title-enabled" type="checkbox" checked><span class="toggle"></span><span>启用关注</span></label>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close-dialog="title-dialog">取消</button><button class="button primary" type="submit">应用</button></div>
+  </form>
+</dialog>
+{% endblock %}

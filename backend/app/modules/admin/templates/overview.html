@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block heading %}运行概览{% endblock %}
+
+{% block content %}
+<section class="overview-grid" aria-label="Monitor 运行状态">
+  <div class="status-panel primary-panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">MONITOR</p>
+        <h2>运行状态</h2>
+      </div>
+      <span id="runtime-badge" class="badge neutral">加载中</span>
+    </div>
+
+    <dl class="status-facts">
+      <div><dt>控制状态</dt><dd data-status="control_state">--</dd></div>
+      <div><dt>连接状态</dt><dd data-status="connected">--</dd></div>
+      <div><dt>处理器</dt><dd data-status="handler_registered">--</dd></div>
+      <div><dt>运行时长</dt><dd data-status="uptime_seconds">--</dd></div>
+      <div><dt>配置状态</dt><dd data-status="watchlist_status">--</dd></div>
+      <div><dt>重启需求</dt><dd data-status="restart_required">--</dd></div>
+    </dl>
+
+    <div class="action-row" aria-label="Monitor 操作">
+      <button id="start-monitor" class="button primary" disabled>
+        <span aria-hidden="true">▶</span><span>启动</span>
+      </button>
+      <button id="stop-monitor" class="button danger" disabled>
+        <span aria-hidden="true">■</span><span>停止</span>
+      </button>
+      <button id="run-preflight" class="button secondary" disabled>
+        <span aria-hidden="true">✓</span><span>运行预检</span>
+      </button>
+      <button id="refresh-status" class="icon-button bordered" title="刷新状态" aria-label="刷新状态">↻</button>
+    </div>
+    <p id="restart-notice" class="inline-notice warning hidden">监听配置已变化，当前进程仍使用启动时快照。停止后重新启动即可生效。</p>
+  </div>
+
+  <div class="status-panel health-panel">
+    <div class="section-heading compact">
+      <div>
+        <p class="eyebrow">HEALTH</p>
+        <h2>健康信号</h2>
+      </div>
+    </div>
+    <div class="health-stack">
+      <div class="health-row"><span>存活</span><strong data-status="liveness">--</strong></div>
+      <div class="health-row"><span>就绪</span><strong data-status="readiness">--</strong></div>
+      <div class="health-row"><span>Task 所有权</span><strong data-status="task_owned">--</strong></div>
+      <div class="health-row"><span>最近错误</span><strong data-status="last_error_code">无</strong></div>
+    </div>
+  </div>
+</section>
+
+<section class="section-block" aria-labelledby="metrics-heading">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">LIVE COUNTERS</p>
+      <h2 id="metrics-heading">运行统计</h2>
+    </div>
+    <span class="section-meta">实时快照</span>
+  </div>
+  <div id="metrics-grid" class="metrics-grid" aria-live="polite">
+    <div class="metric"><span>监听频道</span><strong data-metric="enabled_source_channels">0</strong></div>
+    <div class="metric"><span>已解析频道</span><strong data-metric="resolved_channel_count">0</strong></div>
+    <div class="metric"><span>收到消息</span><strong data-metric="events_seen_total">0</strong></div>
+    <div class="metric"><span>标题命中</span><strong data-metric="events_matched_total">0</strong></div>
+    <div class="metric"><span>成功入库</span><strong data-metric="ingest_stored_total">0</strong></div>
+    <div class="metric"><span>重复消息</span><strong data-metric="ingest_duplicate_total">0</strong></div>
+    <div class="metric"><span>处理成功</span><strong data-metric="process_success_total">0</strong></div>
+    <div class="metric"><span>处理失败</span><strong data-metric="process_failed_total">0</strong></div>
+  </div>
+</section>
+
+<section class="section-block" aria-labelledby="errors-heading">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">RECENT ERRORS</p>
+      <h2 id="errors-heading">最近错误</h2>
+    </div>
+  </div>
+  <div class="table-frame">
+    <table>
+      <thead><tr><th>错误码</th><th>阶段</th><th>恢复性</th><th>时间</th><th>重试</th></tr></thead>
+      <tbody id="error-list"><tr><td colspan="5" class="empty-cell">暂无运行错误</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<dialog id="preflight-dialog" class="dialog report-dialog">
+  <div class="dialog-header">
+    <div><p class="eyebrow">STATIC PREFLIGHT</p><h2>启动前检查</h2></div>
+    <button class="icon-button" data-close-dialog="preflight-dialog" aria-label="关闭" title="关闭">×</button>
+  </div>
+  <div id="preflight-content" class="report-list"></div>
+  <div class="dialog-actions"><button class="button secondary" data-close-dialog="preflight-dialog">关闭</button></div>
+</dialog>
+{% endblock %}
