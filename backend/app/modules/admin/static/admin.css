@@ -151,7 +151,7 @@ tbody tr:hover td { background: #fafcfc; }
 
 .dialog { width: min(520px, calc(100vw - 28px)); padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); }
 .dialog::backdrop { background: rgba(16, 27, 32, 0.48); }
-.dialog > form, .dialog > .dialog-header, .dialog > .dialog-actions, .dialog > .report-list { margin-left: 22px; margin-right: 22px; }
+.dialog > form, .dialog > .dialog-header, .dialog > .dialog-actions, .dialog > .report-list, .dialog > .preflight-result { margin-left: 22px; margin-right: 22px; }
 .dialog > form { margin: 0; padding: 22px; }
 .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .dialog-header h2 { margin: 3px 0 0; font-size: 18px; }
@@ -173,6 +173,16 @@ tbody tr:hover td { background: #fafcfc; }
 .report-item { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .report-item span { color: var(--muted); }
 .report-item strong { text-align: right; overflow-wrap: anywhere; }
+.preflight-result { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid; border-radius: 6px; }
+.preflight-result.passed { color: #116149; background: #edf8f3; border-color: #9fd4c1; }
+.preflight-result.failed { color: #9a302f; background: #fff2f1; border-color: #e4aaa6; }
+.preflight-result-icon { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; color: #fff; border-radius: 50%; font-weight: 800; }
+.preflight-result.passed .preflight-result-icon { background: #167354; }
+.preflight-result.failed .preflight-result-icon { background: #a63836; }
+.preflight-result strong { display: block; font-size: 15px; }
+.preflight-result p { margin: 3px 0 0; color: currentColor; font-size: 12px; line-height: 1.45; }
+.value-pass { color: #167354; }
+.value-fail { color: #a63836; }
 
 .toast-region { position: fixed; z-index: 20; right: 22px; bottom: 22px; display: grid; gap: 9px; width: min(360px, calc(100vw - 28px)); }
 .toast { padding: 13px 15px; color: white; background: #22343b; border-radius: 6px; box-shadow: var(--shadow); font-size: 13px; animation: toast-in 160ms ease-out; }

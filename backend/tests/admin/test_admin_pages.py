@@ -86,6 +86,7 @@ async def test_overview_page_renders_local_shell_and_csrf_meta(tmp_path: Path) -
     assert "运行概览" in response.text
     assert 'id="start-monitor"' in response.text
     assert 'id="preflight-dialog"' in response.text
+    assert 'id="preflight-result"' in response.text
     assert "must-not-render" not in response.text
     assert control.shutdown_calls == 1
 
@@ -120,6 +121,8 @@ async def test_admin_static_assets_are_served_without_cache(tmp_path: Path) -> N
     assert "--teal" in css.text
     assert javascript.status_code == 200
     assert "WATCHLIST_REVISION_CONFLICT" in javascript.text
+    assert "预检通过，可以启动" in javascript.text
+    assert "预检未通过" in javascript.text
     assert "X-TG-Hub-CSRF" in javascript.text
 
 

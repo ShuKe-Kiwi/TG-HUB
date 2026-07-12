@@ -217,8 +217,13 @@ function initOverview() {
     setLoading(preflightButton, true);
     try {
       const report = await api("/monitor/preflight", { method: "POST", body: "{}" });
+      const passed = report.status === "pass";
+      const blockers = Array.isArray(report.blockers) ? report.blockers : [];
+      const result = document.querySelector("#preflight-result");
+      result.className = `preflight-result ${passed ? "passed" : "failed"}`;
+      result.innerHTML = `<span class="preflight-result-icon" aria-hidden="true">${passed ? "✓" : "!"}</span><div><strong>${passed ? "预检通过，可以启动" : "预检未通过"}</strong><p>${passed ? "运行环境和监听配置均已满足启动条件。" : escapeHtml(blockers.length ? `存在 ${blockers.length} 个阻塞项，请处理后重新预检。` : "请检查下方未通过项目后重新预检。")}</p></div>`;
       const content = document.querySelector("#preflight-content");
-      content.innerHTML = Object.entries(report).filter(([key]) => !["report_desensitized"].includes(key)).map(([key, value]) => `<div class="report-item"><span>${escapeHtml(key)}</span><strong>${escapeHtml(Array.isArray(value) ? value.join(", ") || "[]" : String(value ?? "--"))}</strong></div>`).join("");
+      content.innerHTML = Object.entries(report).filter(([key]) => !["status", "report_desensitized"].includes(key)).map(([key, value]) => `<div class="report-item"><span>${escapeHtml(preflightLabels[key] ?? key)}</span><strong class="${preflightValueTone(value)}">${escapeHtml(formatPreflightValue(value))}</strong></div>`).join("");
       document.querySelector("#preflight-dialog").showModal();
     } catch (error) { toast(humanError(error), "error"); }
     finally { setLoading(preflightButton, false); }
@@ -227,6 +232,34 @@ function initOverview() {
   document.querySelector("#refresh-status").addEventListener("click", () => poll(true));
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(true); });
   poll(true);
+}
+
+const preflightLabels = {
+  watchlist_loaded: "监听配置已加载",
+  watchlist_schema: "监听配置格式",
+  telethon_dependency: "Telethon 依赖",
+  telegram_api_id_configured: "Telegram API ID",
+  telegram_api_hash_configured: "Telegram API Hash",
+  session_configured: "Telegram Session",
+  session_parent_exists: "Session 目录存在",
+  session_parent_writable: "Session 目录可写",
+  database_url_configured: "数据库连接配置",
+  enabled_source_channels: "启用频道数",
+  invalid_source_channels: "无效频道数",
+  enabled_watch_titles: "启用资源名数",
+  blockers: "阻塞项",
+};
+
+function formatPreflightValue(value) {
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "无";
+  const labels = { pass: "通过", fail: "未通过", yes: "是", no: "否" };
+  return labels[value] ?? String(value ?? "--");
+}
+
+function preflightValueTone(value) {
+  if (["pass", "yes"].includes(value)) return "value-pass";
+  if (["fail", "no"].includes(value) || (Array.isArray(value) && value.length)) return "value-fail";
+  return "";
 }
 
 function initWatchlist() {
