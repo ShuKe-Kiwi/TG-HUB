@@ -90,8 +90,8 @@ id                      SERIAL PK
 channel_id              FK → Channel
 tg_message_id           BIGINT          -- TG 消息 ID
 raw_text                TEXT            -- 原始消息文本，完整保存
-raw_media_refs          JSONB           -- [{type:"photo", file_id:"...", file_path?:"..."}]
-raw_payload             JSONB           -- Telethon event 完整序列化（可选，用于回溯）
+raw_media_refs          JSONB           -- 受控媒体引用，不包含 access_hash/file_reference，不下载文件
+raw_payload             JSONB           -- 稳定、可 JSON 化的结构快照（可选，用于回溯）
 content_hash            VARCHAR(64)     -- sha256(raw_text)，备用去重
                                         -- 仅用于无 tg_message_id 或手动导入场景
                                         -- Telegram 主去重依据是 (channel_id, tg_message_id)
@@ -117,6 +117,13 @@ updated_at              TIMESTAMP
 
 **唯一约束：** `(channel_id, tg_message_id)`
 **备用去重：** `(channel_id, content_hash)`
+
+**原始证据约束：**
+
+- `raw_text` 保存被选中的原始 `text` 或 `caption`，不得写入归一化结果；
+- `raw_media_refs` 只保存媒体类型、Telegram 媒体 ID、MIME 类型、大小等稳定引用，不保存 `access_hash`、`file_reference`，也不下载媒体；
+- `raw_payload` 保存版本化的受控结构快照，不直接序列化整个 Telethon 对象，不重复保存正文或凭据；
+- `RawMessage.channel_id -> Channel.id` 使用 `ON DELETE RESTRICT`，有原始消息证据的 Channel 不得物理删除，只能通过状态停用。
 
 ### 2.3 Work
 
@@ -931,6 +938,8 @@ class SourceView:
 | 11 | MVP 两阶段 | MVP-A 验证解析去重，MVP-B 做 Bot |
 | 12 | 三层资源模型 | Work → Resource → ResourceLink，MVP 也建 Work |
 | 13 | Monitor 是传输适配层 | 只构造 IncomingMessage，不直接承担 DB/Parser/Normalizer/Dedup/Bot 编排 |
+| 14 | 原始证据受控保存 | 保存 text/caption 原文、稳定媒体引用和版本化结构快照，不保存 Telethon 凭据或下载媒体 |
+| 15 | Channel 不级联删除证据 | RawMessage 外键使用 RESTRICT，频道通过状态停用而非物理删除 |
 
 ---
 
@@ -938,7 +947,7 @@ class SourceView:
 
 ### 11.1 当前架构定性
 
-当前项目不是架构偏离，而是主架构尚未完整接通。P6 仍处于受控验证阶段，已有的 preflight、resolver、短时 listener dry-run 都不应被解释为生产监听链路已经完成。
+当前核心主链路已经接通：生产 Monitor 只通过 application boundary 交付消息，后续 ingestion、Parser、Normalizer、Dedup、EventBus 与 Bot notification 保持分层。P6-Deploy 仍在完成真实轮转、备份恢复和最终交付验收，这属于交付进度，不代表业务架构偏离。
 
 目录组织与早期草图存在轻微漂移，但业务边界暂未越界。后续以当前 `app/modules/...` 结构为准更新文档，不为了形式一致强制搬迁代码。
 

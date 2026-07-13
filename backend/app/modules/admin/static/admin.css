@@ -103,6 +103,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .button:disabled, .icon-button:disabled { cursor: not-allowed; opacity: 0.42; }
 .button.loading { color: transparent; position: relative; }
 .button.loading::after { content: ""; position: absolute; width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.55); border-top-color: white; border-radius: 50%; animation: spin 700ms linear infinite; }
+.button.secondary.loading::after { border-color: rgba(23,35,39,0.24); border-top-color: var(--teal); }
 .icon-button { width: 36px; height: 36px; display: inline-grid; place-items: center; padding: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: 19px; }
 .icon-button:hover { color: var(--ink); background: var(--surface-subtle); }
 .icon-button.bordered { border: 1px solid var(--line-strong); background: var(--surface); }

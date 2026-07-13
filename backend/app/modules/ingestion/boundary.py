@@ -203,7 +203,7 @@ class IncomingMessageIngestionBoundary:
             channel_id=channel_id,
             tg_message_id=source_message_id,
             raw_text=raw_text,
-            raw_media_refs=None,
+            raw_media_refs=message.raw_media_refs,
             raw_payload=message.raw_payload,
             published_at=message.published_at,
         )

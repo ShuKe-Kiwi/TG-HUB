@@ -1,11 +1,16 @@
 import asyncio
 import json
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
 from app.config import Settings
-from app.modules.monitor.online_preflight import OnlineSessionPreflightService
+from app.modules.monitor.online_preflight import (
+    OnlineSessionPreflightService,
+    create_online_preflight_client,
+)
 from app.modules.monitor.preflight import StaticStartupPreflight
 from app.modules.monitor.session_ownership import SessionOwnershipLease
 
@@ -79,6 +84,39 @@ def _service(configured, **kwargs):
         ),
         **kwargs,
     )
+
+
+def test_online_preflight_client_uses_canonical_session_path(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured = {}
+
+    def telegram_client(session, api_id, api_hash):
+        captured.update(
+            session=session,
+            api_id=api_id,
+            api_hash=api_hash,
+        )
+        return object()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "telethon",
+        SimpleNamespace(TelegramClient=telegram_client),
+    )
+    configured = Settings(
+        TELEGRAM_SESSION_NAME="~/.tg-hub/telethon",
+        TELEGRAM_API_ID=1,
+        TELEGRAM_API_HASH="hash",
+    )
+
+    create_online_preflight_client(configured)
+
+    assert captured == {
+        "session": str(Path("~/.tg-hub/telethon.session").expanduser()),
+        "api_id": 1,
+        "api_hash": "hash",
+    }
 
 
 async def test_online_preflight_authorizes_and_resolves_numeric_via_client(tmp_path: Path):

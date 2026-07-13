@@ -17,6 +17,7 @@ from app.modules.monitor.preflight import build_static_startup_preflight
 from app.modules.monitor.session_ownership import (
     SessionOwnershipError,
     SessionOwnershipLease,
+    canonical_session_path,
     validate_session_file,
 )
 from app.modules.monitor.source_channels import precheck_source_channels
@@ -94,7 +95,7 @@ def create_online_preflight_client(app_settings: Settings) -> OnlinePreflightCli
     if app_settings.TELEGRAM_API_ID is None:
         raise RuntimeError("TELEGRAM_API_ID_MISSING")
     return TelegramClient(
-        app_settings.TELEGRAM_SESSION_NAME,
+        str(canonical_session_path(app_settings)),
         app_settings.TELEGRAM_API_ID,
         app_settings.TELEGRAM_API_HASH,
     )

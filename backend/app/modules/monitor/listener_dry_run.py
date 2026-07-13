@@ -235,9 +235,67 @@ class TelethonIncomingMessageAdapter:
             source_username=source_username,
             text=text,
             caption=caption,
-            raw_payload=None,
+            raw_media_refs=_extract_media_refs(message),
+            raw_payload=_build_raw_payload(message, channel_id, message_id),
             published_at=published_at,
         )
+
+
+def _extract_media_refs(message: object) -> list[dict[str, Any]] | None:
+    media = getattr(message, "media", None)
+    if media is None:
+        return None
+
+    photo = getattr(media, "photo", None)
+    if photo is not None:
+        ref: dict[str, Any] = {"type": "photo"}
+        media_id = getattr(photo, "id", None)
+        if media_id is not None:
+            ref["telegram_media_id"] = str(media_id)
+        return [ref]
+
+    document = getattr(media, "document", None)
+    if document is not None:
+        ref = {"type": "document"}
+        media_id = getattr(document, "id", None)
+        if media_id is not None:
+            ref["telegram_media_id"] = str(media_id)
+        mime_type = getattr(document, "mime_type", None)
+        if isinstance(mime_type, str) and mime_type:
+            ref["mime_type"] = mime_type[:255]
+        size = getattr(document, "size", None)
+        if isinstance(size, int) and size >= 0:
+            ref["size_bytes"] = size
+        return [ref]
+
+    media_type = type(media).__name__.removeprefix("MessageMedia").casefold()
+    return [{"type": media_type or "unknown"}]
+
+
+def _build_raw_payload(
+    message: object,
+    channel_id: int,
+    message_id: object,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "message_id": str(message_id),
+        "channel_id": str(channel_id),
+        "has_media": getattr(message, "media", None) is not None,
+    }
+    grouped_id = getattr(message, "grouped_id", None)
+    if grouped_id is not None:
+        payload["grouped_id"] = str(grouped_id)
+    reply_to = getattr(message, "reply_to_msg_id", None)
+    if reply_to is not None:
+        payload["reply_to_message_id"] = str(reply_to)
+    edit_date = getattr(message, "edit_date", None)
+    if isinstance(edit_date, datetime):
+        payload["edited_at"] = edit_date.isoformat()
+    media_refs = _extract_media_refs(message)
+    if media_refs:
+        payload["media_type"] = media_refs[0]["type"]
+    return payload
 
 
 def create_telethon_client_from_settings(

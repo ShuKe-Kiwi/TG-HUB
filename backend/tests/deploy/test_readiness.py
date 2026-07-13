@@ -12,7 +12,7 @@ from app.main import create_app
 from app.modules.monitor.control import MonitorStopResult
 from app.modules.monitor.watchlist_service import WatchlistApplicationService
 
-_HEAD = "7b3f2a1c9d04"
+_HEAD = "c4a8e7b1d2f0"
 
 
 class FakeResult:
@@ -27,9 +27,12 @@ class FakeResult:
 
 
 class FakeSession:
+    def __init__(self, head: str = _HEAD) -> None:
+        self.head = head
+
     async def execute(self, statement):
         if "alembic_version" in str(statement):
-            return FakeResult([_HEAD])
+            return FakeResult([self.head])
         return FakeResult([])
 
 
@@ -109,6 +112,22 @@ async def test_readiness_timeout_is_stable_and_desensitized(tmp_path: Path) -> N
     assert report.status == "not_ready"
     assert report.error_code == "DATABASE_TIMEOUT"
     assert "postgresql" not in report.model_dump_json()
+
+
+async def test_readiness_rejects_previous_migration_head(tmp_path: Path) -> None:
+    watchlist = tmp_path / "watchlist.json"
+    _write_watchlist(watchlist)
+
+    report = await check_application_readiness(
+        Settings(WATCHLIST_PATH=watchlist),
+        session_factory=_factory(FakeSession("7b3f2a1c9d04")),
+        assembly_ready=True,
+    )
+
+    assert report.status == "not_ready"
+    assert report.checks.database == "pass"
+    assert report.checks.migration == "fail"
+    assert report.error_code == "MIGRATION_NOT_AT_HEAD"
 
 
 async def test_health_endpoints_have_separate_semantics(tmp_path: Path) -> None:

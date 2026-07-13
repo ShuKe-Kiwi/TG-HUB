@@ -17,6 +17,7 @@ class IncomingMessage(BaseModel):
     source_username: str | None = None
     text: str | None = None
     caption: str | None = None
+    raw_media_refs: list[dict[str, Any]] | None = None
     raw_payload: dict[str, Any] | None = None
     published_at: datetime | None = None
 

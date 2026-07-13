@@ -14,6 +14,7 @@ import asyncio
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.modules.channel.schema import ChannelCreate
@@ -174,6 +175,28 @@ async def test_rawmessage_fields_saved_verbatim(db_session):
     assert fetched.raw_text == raw_text
     assert fetched.raw_payload == raw_payload
     assert fetched.raw_media_refs == raw_media_refs
+
+
+@pytest.mark.asyncio
+async def test_channel_with_raw_messages_cannot_be_deleted(db_session):
+    channel = await ChannelService(db_session).create_or_get(
+        ChannelCreate(name="evidence channel", tg_id=445, tg_username="evidence")
+    )
+    message = await RawMessageService(db_session).ingest(
+        RawMessageCreate(
+            channel_id=channel.id,
+            tg_message_id=5002,
+            raw_text="preserved evidence",
+        )
+    )
+    message_id = message.id
+
+    await db_session.delete(channel)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+    assert await RawMessageService(db_session).get_by_id(message_id) is not None
 
 
 @pytest.mark.asyncio

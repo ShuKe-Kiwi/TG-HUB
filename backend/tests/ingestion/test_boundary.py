@@ -65,6 +65,9 @@ async def test_ingest_incoming_stores_raw_message(db_session: AsyncSession) -> N
             source_message_id="1001",
             text="  raw text is preserved  ",
             caption="caption must be ignored",
+            raw_media_refs=[
+                {"type": "photo", "telegram_media_id": "987654321"}
+            ],
             raw_payload={"safe": "stored"},
         )
     )
@@ -83,7 +86,9 @@ async def test_ingest_incoming_stores_raw_message(db_session: AsyncSession) -> N
     assert row.tg_message_id == 1001
     assert row.raw_text == "  raw text is preserved  "
     assert row.raw_payload == {"safe": "stored"}
-    assert row.raw_media_refs is None
+    assert row.raw_media_refs == [
+        {"type": "photo", "telegram_media_id": "987654321"}
+    ]
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,10 @@ from typing import Any
 import pytest
 
 from app.modules.monitor.config import WatchlistConfig
-from app.modules.monitor.listener_dry_run import run_monitor_dry_run
+from app.modules.monitor.listener_dry_run import (
+    TelethonIncomingMessageAdapter,
+    run_monitor_dry_run,
+)
 
 
 @dataclass
@@ -17,6 +20,9 @@ class FakeMessage:
     date: datetime = datetime(2026, 7, 9, tzinfo=timezone.utc)
     media: Any | None = None
     caption: str | None = None
+    grouped_id: int | None = None
+    reply_to_msg_id: int | None = None
+    edit_date: datetime | None = None
 
 
 @dataclass
@@ -84,6 +90,71 @@ def _watchlist() -> WatchlistConfig:
         ],
         watch_titles=[{"title": "家业"}],
     )
+
+
+def test_adapter_preserves_controlled_photo_evidence() -> None:
+    photo = type("Photo", (), {"id": 987654321, "access_hash": "secret"})()
+    media = type("MessageMediaPhoto", (), {"photo": photo})()
+    message = FakeMessage(
+        id=123,
+        message="sensitive body",
+        media=media,
+        grouped_id=456,
+        reply_to_msg_id=122,
+        edit_date=datetime(2026, 7, 9, 1, 2, tzinfo=timezone.utc),
+    )
+
+    incoming = TelethonIncomingMessageAdapter().from_telethon_event(
+        FakeEvent(chat_id=-100123, message=message)
+    )
+
+    assert incoming.raw_media_refs == [
+        {"type": "photo", "telegram_media_id": "987654321"}
+    ]
+    assert incoming.raw_payload == {
+        "schema_version": 1,
+        "message_id": "123",
+        "channel_id": "-100123",
+        "has_media": True,
+        "grouped_id": "456",
+        "reply_to_message_id": "122",
+        "edited_at": "2026-07-09T01:02:00+00:00",
+        "media_type": "photo",
+    }
+    serialized = json.dumps(incoming.raw_payload)
+    assert "sensitive body" not in serialized
+    assert "secret" not in serialized
+
+
+def test_adapter_preserves_controlled_document_evidence() -> None:
+    document = type(
+        "Document",
+        (),
+        {
+            "id": 123456,
+            "mime_type": "video/mp4",
+            "size": 4096,
+            "file_reference": b"secret",
+        },
+    )()
+    media = type("MessageMediaDocument", (), {"document": document})()
+
+    incoming = TelethonIncomingMessageAdapter().from_telethon_event(
+        FakeEvent(
+            chat_id=-100456,
+            message=FakeMessage(id=124, message="title", media=media),
+        )
+    )
+
+    assert incoming.raw_media_refs == [
+        {
+            "type": "document",
+            "telegram_media_id": "123456",
+            "mime_type": "video/mp4",
+            "size_bytes": 4096,
+        }
+    ]
+    assert "file_reference" not in json.dumps(incoming.raw_media_refs)
 
 
 @pytest.mark.asyncio

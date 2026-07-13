@@ -37,7 +37,7 @@ class RawMessage(Base):
 
     # Foreign key to channel
     channel_id: Mapped[int] = mapped_column(
-        ForeignKey("channels.id", ondelete="CASCADE"), index=True
+        ForeignKey("channels.id", ondelete="RESTRICT"), index=True
     )
 
     # Telegram message identity
