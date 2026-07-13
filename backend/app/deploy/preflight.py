@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import socket
+import stat
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -11,11 +16,20 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import Settings
 from app.modules.monitor.config import load_watchlist
 
 CheckStatus = Literal["pass", "fail"]
+
+EXIT_CONFIG = 10
+EXIT_PERMISSION = 11
+EXIT_PORT = 12
+EXIT_DATABASE = 13
+EXIT_MIGRATION = 14
+EXIT_WATCHLIST = 15
+EXIT_STATIC = 16
 
 
 class ProductionConfigReport(BaseModel):
@@ -53,6 +67,16 @@ class ReadinessReport(BaseModel):
     checks: ReadinessChecks
     monitor: MonitorReadiness
     error_code: str | None = None
+    report_desensitized: Literal["yes"] = "yes"
+
+
+class StartupPreflightReport(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["pass", "fail"]
+    error_code: str | None = None
+    exit_code: int = 0
+    checks: dict[str, CheckStatus]
     report_desensitized: Literal["yes"] = "yes"
 
 
@@ -111,6 +135,96 @@ def validate_production_config(
 def _expected_alembic_heads(alembic_ini: Path) -> set[str]:
     config = Config(str(alembic_ini))
     return set(ScriptDirectory.from_config(config).get_heads())
+
+
+def _port_available(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((host, port))
+    except OSError:
+        return False
+    return True
+
+
+async def run_startup_preflight(
+    env_file: Path,
+    *,
+    check_port: bool = True,
+    home: Path | None = None,
+) -> StartupPreflightReport:
+    """Fail-closed production startup validation with desensitized output."""
+    checks: dict[str, CheckStatus] = {}
+    env_file = env_file.expanduser().resolve()
+    checks["env_file"] = "pass" if env_file.is_file() else "fail"
+    if checks["env_file"] == "fail":
+        return StartupPreflightReport(status="fail", error_code="ENV_FILE_MISSING", exit_code=EXIT_CONFIG, checks=checks)
+    mode = stat.S_IMODE(env_file.stat().st_mode)
+    checks["env_permissions"] = "pass" if mode & 0o077 == 0 else "fail"
+    if checks["env_permissions"] == "fail":
+        return StartupPreflightReport(status="fail", error_code="ENV_FILE_PERMISSION", exit_code=EXIT_PERMISSION, checks=checks)
+    try:
+        from app.config import load_settings
+
+        configured = load_settings(env_file)
+    except Exception:
+        checks["config"] = "fail"
+        return StartupPreflightReport(status="fail", error_code="CONFIG_INVALID", exit_code=EXIT_CONFIG, checks=checks)
+    checks["config"] = "pass"
+    contract = validate_production_config(configured, home=home)
+    production_ok = configured.APP_ENV == "production"
+    port_valid = 1 <= configured.ADMIN_PORT <= 65535
+    checks.update(
+        production_env="pass" if production_ok else "fail",
+        config_contract=contract.status,
+        port_range="pass" if port_valid else "fail",
+    )
+    if not production_ok or contract.status == "fail" or not port_valid:
+        return StartupPreflightReport(status="fail", error_code="CONFIG_INVALID", exit_code=EXIT_CONFIG, checks=checks)
+    port_ok = not check_port or _port_available(configured.ADMIN_BIND_HOST, configured.ADMIN_PORT)
+    checks["port_available"] = "pass" if port_ok else "fail"
+    if not port_ok:
+        return StartupPreflightReport(status="fail", error_code="PORT_OCCUPIED", exit_code=EXIT_PORT, checks=checks)
+    try:
+        load_watchlist(configured.WATCHLIST_PATH)
+        checks["watchlist"] = "pass"
+    except Exception:
+        checks["watchlist"] = "fail"
+        return StartupPreflightReport(status="fail", error_code="WATCHLIST_INVALID", exit_code=EXIT_WATCHLIST, checks=checks)
+    engine = create_async_engine(configured.DATABASE_URL, pool_pre_ping=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        report = await check_application_readiness(
+            configured,
+            session_factory=factory,
+            assembly_ready=True,
+            timeout_seconds=2.0,
+        )
+    finally:
+        await engine.dispose()
+    checks["database"] = report.checks.database
+    checks["migration"] = report.checks.migration
+    if report.checks.database == "fail":
+        return StartupPreflightReport(status="fail", error_code=report.error_code or "DATABASE_UNAVAILABLE", exit_code=EXIT_DATABASE, checks=checks)
+    if report.checks.migration == "fail":
+        return StartupPreflightReport(status="fail", error_code="MIGRATION_NOT_AT_HEAD", exit_code=EXIT_MIGRATION, checks=checks)
+    return StartupPreflightReport(status="pass", checks=checks)
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] != "startup":
+        print(json.dumps({"status": "fail", "error_code": "USAGE_INVALID", "report_desensitized": "yes"}))
+        return EXIT_STATIC
+    selected = os.environ.get("TG_HUB_ENV_FILE")
+    if not selected:
+        print(json.dumps({"status": "fail", "error_code": "ENV_FILE_NOT_CONFIGURED", "report_desensitized": "yes"}))
+        return EXIT_CONFIG
+    report = asyncio.run(run_startup_preflight(Path(selected)))
+    print(report.model_dump_json())
+    return report.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 async def check_application_readiness(
