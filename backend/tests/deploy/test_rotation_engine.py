@@ -66,9 +66,23 @@ def test_dry_run_is_read_only(tmp_path: Path) -> None:
     result = _engine(settings).run(dry_run=True)
 
     assert result.status == "pass"
+    assert result.would_rotate_files == 1
     assert active.read_bytes() == before
     assert not (runtime / "rotation-status.json").exists()
     assert list(archive.iterdir()) == []
+
+
+def test_dry_run_accepts_missing_archive_without_creating_it(
+    tmp_path: Path,
+) -> None:
+    settings, logs, _, _ = _layout(tmp_path)
+    archive = logs / "archive"
+
+    result = _engine(settings).run(dry_run=True)
+
+    assert result.status == "pass"
+    assert result.would_rotate_files == 0
+    assert not archive.exists()
 
 
 def test_application_rotation_keeps_inode_and_commits_gzip(tmp_path: Path) -> None:

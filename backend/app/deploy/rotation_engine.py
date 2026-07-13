@@ -120,6 +120,10 @@ class RotationEngine:
                     status=status.status,
                     error_code=status.error_code,
                     rotated_files=status.rotated_files,
+                    would_rotate_files=sum(
+                        item.trigger_reason in {"size", "age", "recovery"}
+                        for item in file_results.values()
+                    ),
                     cleaned_archives=status.cleaned_archives,
                     archive_budget_status=status.archive_budget_status,
                     active_oversize=status.active_oversize,
@@ -135,7 +139,8 @@ class RotationEngine:
     def _validate_roots(self, *, create: bool) -> None:
         validate_directory(self.runtime_dir, create=False)
         validate_directory(self.log_dir, create=False)
-        validate_directory(self.archive_dir, create=create)
+        if create or self.archive_dir.exists() or self.archive_dir.is_symlink():
+            validate_directory(self.archive_dir, create=create)
         if self.settings.APP_ENV == "production":
             private_root = (Path.home() / ".tg-hub").resolve()
             for path in (
@@ -571,7 +576,11 @@ class RotationEngine:
         observed = archive_bytes + active_bytes
         observed += sum(
             path.stat().st_size
-            for path in self.archive_dir.iterdir()
+            for path in (
+                self.archive_dir.iterdir()
+                if self.archive_dir.exists()
+                else ()
+            )
             if path.is_file() and path not in finals
         )
         return RotationStatus(

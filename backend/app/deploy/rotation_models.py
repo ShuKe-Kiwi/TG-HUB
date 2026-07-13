@@ -97,6 +97,7 @@ class RotationRunResult(BaseModel):
     status: RunStatus
     error_code: str | None = None
     rotated_files: int = 0
+    would_rotate_files: int = 0
     cleaned_archives: int = 0
     archive_budget_status: BudgetStatus = "within_budget"
     active_oversize: bool = False
