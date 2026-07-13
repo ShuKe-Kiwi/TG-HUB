@@ -28,11 +28,11 @@ def main() -> int:
     if report.status == "fail":
         _write_state("blocked", report.error_code or "STATIC_PREFLIGHT_FAILED")
         return report.exit_code if report.exit_code == 13 else 0
-    settings = load_settings(selected)
+    load_settings(selected)
     _write_state("starting")
     os.execv(
         os.sys.executable,
-        [os.sys.executable, "-m", "uvicorn", "app.main:app", "--host", settings.ADMIN_BIND_HOST, "--port", str(settings.ADMIN_PORT), "--workers", "1", "--no-access-log"],
+        [os.sys.executable, "-m", "app.deploy.server"],
     )
     return 16
 

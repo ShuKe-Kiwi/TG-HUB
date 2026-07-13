@@ -19,6 +19,8 @@ if launchctl print "gui/$UID/com.tghub.service" >/dev/null 2>&1 || [ -e "$PLIST"
 fi
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 chmod 700 "$LOG_DIR"
+touch "$LOG_DIR/app.stdout.log" "$LOG_DIR/app.stderr.log"
+chmod 600 "$LOG_DIR/app.stdout.log" "$LOG_DIR/app.stderr.log"
 sed -e "s|__START_SCRIPT__|$HERE/start.sh|g" -e "s|__BACKEND_DIR__|$BACKEND|g" -e "s|__ENV_FILE__|$ENV_FILE|g" -e "s|__LOG_DIR__|$LOG_DIR|g" "$HERE/com.tghub.service.plist.template" > "$TMP"
 plutil -lint "$TMP" >/dev/null
 chmod 600 "$TMP"

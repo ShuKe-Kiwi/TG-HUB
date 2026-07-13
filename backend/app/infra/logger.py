@@ -38,6 +38,8 @@ class StructuredJsonFormatter(logging.Formatter):
         raw_event = record.msg if isinstance(record.msg, str) else ""
         if mapping is not None:
             event, default_error = mapping
+            if record.levelno < logging.WARNING:
+                default_error = None
         elif _EVENT_PATTERN.fullmatch(raw_event):
             event, default_error = raw_event, None
         else:

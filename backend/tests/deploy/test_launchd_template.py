@@ -25,6 +25,8 @@ def test_lifecycle_scripts_use_modern_launchctl_and_no_pid_truth() -> None:
     uninstall = (DEPLOY / "uninstall.sh").read_text(encoding="utf-8")
     assert "launchctl bootstrap" in install
     assert "SERVICE_ALREADY_INSTALLED" in install
+    assert 'touch "$LOG_DIR/app.stdout.log" "$LOG_DIR/app.stderr.log"' in install
+    assert 'chmod 600 "$LOG_DIR/app.stdout.log" "$LOG_DIR/app.stderr.log"' in install
     assert "launchctl bootout" in stop
     assert "launchctl bootout" in uninstall
     combined = install + stop + uninstall + (DEPLOY / "status.sh").read_text(encoding="utf-8")
@@ -38,3 +40,11 @@ def test_runtime_scripts_use_backend_virtualenv() -> None:
         content = (DEPLOY / name).read_text(encoding="utf-8")
         assert '"$BACKEND/.venv/bin/python"' in content
         assert '"$BACKEND/../.venv/bin/python"' not in content
+
+
+def test_runtime_uses_server_module_without_uvicorn_log_reconfiguration() -> None:
+    runtime = (DEPLOY.parent / "app/deploy/runtime.py").read_text(encoding="utf-8")
+    server = (DEPLOY.parent / "app/deploy/server.py").read_text(encoding="utf-8")
+    assert '"-m", "app.deploy.server"' in runtime
+    assert "log_config=None" in server
+    assert "access_log=False" in server

@@ -35,10 +35,10 @@
 | P6-2J+ | 最近命中脱敏摘要与频道昵称展示 | ✅ 完成 | 44 相关测试通过 |
 | P6-2K-0 | 外部平台热播数据源可行性调查与设计 | ✅ 设计锁定，延期实现 | 文档审查通过 |
 | P6-2K-1A | Trending core contracts | ⏸ 暂停（项目完成后追加） | - |
-| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 462 全量通过 |
+| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 463 全量通过 |
 | P6-Deploy-1 | health/readiness + production config contract | ✅ 完成 | 6/6 新增测试 |
 | P6-Deploy-2 | launchd + lifecycle scripts | ✅ 真实安装验收完成 | 11/11 Deploy；458 全量通过 |
-| P6-Deploy-3A | structured logging + redaction + stream split | 🚧 实现完成，待安装验收 | 4/4 日志专项；462 全量通过 |
+| P6-Deploy-3A | structured logging + redaction + stream split | ✅ 真实安装验收完成 | 4/4 日志专项；463 全量通过 |
 
 ---
 
@@ -52,7 +52,7 @@
 - P6-2K-0 已锁定为独立运营资源发现模块，不依赖 MonitorRuntime，也不自动修改 watchlist。
 - P6-2K 已暂停：设计保留，项目完成前不实现任何平台 adapter、scheduler、catalog service 或热播资源页面。
 - `P6-Deploy-1`、`P6-Deploy-2` 已完成；`com.tghub.service` 已作为用户级 LaunchAgent 真实安装并通过生命周期验收。
-- `P6-Deploy-3A` 已实现 JSON 日志、字段白名单、异常原文抑制、第三方映射和 stdout/stderr 互斥路由；已安装 plist 尚未迁移到新日志文件名。
+- `P6-Deploy-3A` 已完成真实安装验收：LaunchAgent 使用新日志路径，文件权限为 `0600`，迁移后新增日志全部为单行 JSON。
 - 当前外部 `watchlist.json` 已由运营修改，两个旧 P6-2B 外部 fixture 测试可能因样本期待标题与运行时 watchlist 不一致而失败；这不代表 Parser/Monitor 回归失败，后续应让离线 fixture 使用独立固定 watchlist。
 
 ---
