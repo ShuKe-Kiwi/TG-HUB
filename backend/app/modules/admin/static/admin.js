@@ -122,6 +122,14 @@ function formatUptime(seconds) {
   return hours ? `${hours}时 ${minutes}分` : minutes ? `${minutes}分 ${rest}秒` : `${rest}秒`;
 }
 
+function formatBytes(value) {
+  if (value === null || value === undefined) return "未知";
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
 function initOverview() {
   let polling = false;
   let pollTimer = null;
@@ -175,6 +183,38 @@ function initOverview() {
     updateRefreshTime();
   }
 
+  function renderRotation(rotation) {
+    const labels = {
+      agent_status: ({ not_configured: "未配置", configured: "已配置", invalid: "无效" })[rotation.agent_status] ?? "未知",
+      status: ({ never_run: "尚未运行", pass: "通过", partial: "部分完成", fail: "失败", invalid: "无效" })[rotation.status] ?? "未知",
+      last_completed_at: rotation.last_completed_at ? formatDate(rotation.last_completed_at) : "--",
+      stale: rotation.stale === "not_applicable" ? "不适用" : rotation.stale === "unknown" ? "未知" : rotation.stale ? "已过期" : "正常",
+      archive_bytes: formatBytes(rotation.archive_bytes),
+      archive_budget_status: ({ within_budget: "预算内", cleaned: "已清理", exceeded_unrecoverable: "无法收口", unknown: "未知" })[rotation.archive_budget_status] ?? "未知",
+      active_oversize: rotation.active_oversize === null ? "未知" : rotation.active_oversize ? "是" : "否",
+      legacy_content_possible: rotation.legacy_content_possible === null ? "未知" : rotation.legacy_content_possible ? "存在" : "无",
+    };
+    for (const [key, value] of Object.entries(labels)) {
+      document.querySelectorAll(`[data-rotation="${key}"]`).forEach((node) => { node.textContent = value; });
+    }
+    const state = document.querySelector("#rotation-state");
+    if (state) state.textContent = rotation.error_code ? `需关注：${rotation.error_code}` : "只读状态";
+  }
+
+  function renderRotationUnavailable() {
+    document.querySelectorAll("[data-rotation]").forEach((node) => { node.textContent = "不可用"; });
+    const state = document.querySelector("#rotation-state");
+    if (state) state.textContent = "状态不可用";
+  }
+
+  async function pollRotation() {
+    try {
+      renderRotation(await api("/observability/rotation"));
+    } catch (_) {
+      renderRotationUnavailable();
+    }
+  }
+
   function renderMatches(matches) {
     const body = document.querySelector("#match-list");
     if (!matches.length) {
@@ -204,6 +244,7 @@ function initOverview() {
     if (immediate) clearPageError();
     try {
       render(await api("/monitor/status"));
+      await pollRotation();
     } catch (error) {
       setGlobalStatus("failed", "管理服务不可用");
       showPageError(humanError(error));

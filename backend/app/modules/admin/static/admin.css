@@ -113,6 +113,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .health-row:last-child { border-bottom: 0; }
 .health-row span { color: var(--muted); }
 .health-row strong { max-width: 60%; text-align: right; overflow-wrap: anywhere; }
+.rotation-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); }
+.rotation-facts > div { min-height: 76px; padding: 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.rotation-facts > div:nth-child(4n) { border-right: 0; }
+.rotation-facts > div:nth-last-child(-n+4) { border-bottom: 0; }
+.rotation-facts dt { color: var(--muted); font-size: 12px; }
+.rotation-facts dd { margin: 8px 0 0; font-weight: 700; overflow-wrap: anywhere; }
 
 .metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); border: 1px solid var(--line); border-radius: 7px; background: var(--surface); overflow: hidden; }
 .metric { min-height: 100px; display: flex; flex-direction: column; justify-content: center; padding: 17px 19px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -202,6 +208,10 @@ tbody tr:hover td { background: #fafcfc; }
   .local-note { display: none; }
   .main-area { padding-top: 22px; }
   .overview-grid { grid-template-columns: 1fr; }
+  .rotation-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rotation-facts > div, .rotation-facts > div:nth-child(4n) { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .rotation-facts > div:nth-child(2n) { border-right: 0; }
+  .rotation-facts > div:nth-last-child(-n+2) { border-bottom: 0; }
 }
 
 @media (max-width: 680px) {
@@ -217,6 +227,9 @@ tbody tr:hover td { background: #fafcfc; }
   .status-facts > div, .status-facts > div:nth-child(3n) { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .status-facts > div:nth-child(2n) { border-right: 0; }
   .status-facts > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .rotation-facts { grid-template-columns: 1fr; }
+  .rotation-facts > div, .rotation-facts > div:nth-child(2n), .rotation-facts > div:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid var(--line); }
+  .rotation-facts > div:last-child { border-bottom: 0; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric, .metric:nth-child(4n) { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .metric:nth-child(2n) { border-right: 0; }

@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 
 from app.config import Settings
+from app.deploy.rotation_status import RotationStatusProjection
 from app.main import create_app
 from app.modules.monitor.control import (
     MonitorAllowedActions,
@@ -140,6 +141,8 @@ class FakeControlService:
 @asynccontextmanager
 async def _client(
     tmp_path: Path,
+    *,
+    rotation_status_reader=None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, FakeControlService, WatchlistApplicationService]]:
     path = tmp_path / "watchlist.json"
     _write_watchlist(path)
@@ -155,6 +158,20 @@ async def _client(
         watchlist_service=watchlist,
         monitor_control_service=control,
         admin_csrf_token=_CSRF,
+        rotation_status_reader=rotation_status_reader or (
+            lambda: RotationStatusProjection(
+                agent_status="not_configured",
+                status="never_run",
+                stale="not_applicable",
+                rotated_files=0,
+                cleaned_archives=0,
+                archive_bytes=0,
+                active_bytes=0,
+                archive_budget_status="within_budget",
+                active_oversize=False,
+                legacy_content_possible=False,
+            )
+        ),
     )
     async with application.router.lifespan_context(application):
         transport = httpx.ASGITransport(app=application)
@@ -191,6 +208,57 @@ async def test_status_is_versioned_desensitized_and_not_cached(tmp_path: Path) -
     assert control.status_calls == 1
     assert control.start_calls == []
     assert control.stop_calls == 0
+
+
+async def test_rotation_status_is_independent_read_only_projection(
+    tmp_path: Path,
+) -> None:
+    projection = RotationStatusProjection(
+        agent_status="configured",
+        status="fail",
+        error_code="ROTATION_COMPRESS_FAILED",
+        stale=False,
+        rotated_files=0,
+        cleaned_archives=0,
+        archive_bytes=42,
+        active_bytes=9,
+        archive_budget_status="within_budget",
+        active_oversize=False,
+        legacy_content_possible=True,
+    )
+    async with _client(
+        tmp_path, rotation_status_reader=lambda: projection
+    ) as (client, control, _):
+        response = await client.get("/api/admin/v1/observability/rotation")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["data"] == projection.model_dump(mode="json")
+    assert control.status_calls == 0
+
+
+async def test_rotation_reader_failure_degrades_without_breaking_admin(
+    tmp_path: Path,
+) -> None:
+    def fail_reader():
+        raise RuntimeError("sensitive /private/path exception")
+
+    async with _client(tmp_path, rotation_status_reader=fail_reader) as (
+        client,
+        _,
+        _,
+    ):
+        rotation = await client.get("/api/admin/v1/observability/rotation")
+        monitor = await client.get("/api/admin/v1/monitor/status")
+        live = await client.get("/health/live")
+
+    assert rotation.status_code == 200
+    assert rotation.json()["data"]["status"] == "invalid"
+    assert rotation.json()["data"]["error_code"] == "ROTATION_STATUS_READ_FAILED"
+    assert "sensitive" not in rotation.text
+    assert "/private/path" not in rotation.text
+    assert monitor.status_code == 200
+    assert live.status_code == 200
 
 
 async def test_watchlist_get_has_schema_version_and_validation(tmp_path: Path) -> None:

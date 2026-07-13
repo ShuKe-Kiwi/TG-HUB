@@ -88,7 +88,13 @@ async def test_overview_page_renders_local_shell_and_csrf_meta(tmp_path: Path) -
     assert 'id="preflight-dialog"' in response.text
     assert 'id="preflight-result"' in response.text
     assert 'id="match-list"' in response.text
+    assert 'id="rotation-heading"' in response.text
+    assert 'data-rotation="agent_status"' in response.text
+    assert 'data-rotation="archive_budget_status"' in response.text
     assert "最近命中" in response.text
+    assert "立即轮转" not in response.text
+    assert "安装 Agent" not in response.text
+    assert "删除归档" not in response.text
     assert "must-not-render" not in response.text
     assert control.shutdown_calls == 1
 

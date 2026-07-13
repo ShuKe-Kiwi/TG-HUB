@@ -54,6 +54,26 @@
   </div>
 </section>
 
+<section class="section-block" aria-labelledby="rotation-heading">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">LOG ROTATION</p>
+      <h2 id="rotation-heading">日志轮转</h2>
+    </div>
+    <span id="rotation-state" class="section-meta">读取中</span>
+  </div>
+  <dl class="rotation-facts" aria-live="polite">
+    <div><dt>Agent 配置</dt><dd data-rotation="agent_status">--</dd></div>
+    <div><dt>最近状态</dt><dd data-rotation="status">--</dd></div>
+    <div><dt>最近完成</dt><dd data-rotation="last_completed_at">--</dd></div>
+    <div><dt>调度新鲜度</dt><dd data-rotation="stale">--</dd></div>
+    <div><dt>归档占用</dt><dd data-rotation="archive_bytes">--</dd></div>
+    <div><dt>预算状态</dt><dd data-rotation="archive_budget_status">--</dd></div>
+    <div><dt>Active 超限</dt><dd data-rotation="active_oversize">--</dd></div>
+    <div><dt>历史格式</dt><dd data-rotation="legacy_content_possible">--</dd></div>
+  </dl>
+</section>
+
 <section class="section-block" aria-labelledby="metrics-heading">
   <div class="section-heading">
     <div>

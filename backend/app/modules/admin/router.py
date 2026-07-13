@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from typing import Any
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.modules.monitor.control import MonitorControlError
 from app.modules.monitor.watchlist_service import WatchlistServiceError
+from app.deploy.rotation_status import invalid_rotation_projection
 
 _API_VERSION = "v1"
 _SCHEMA_VERSION = 1
@@ -137,10 +139,23 @@ def _watchlist_service(request: Request):
     return request.app.state.watchlist_service
 
 
+def _rotation_status_reader(request: Request):
+    return request.app.state.rotation_status_reader
+
+
 @router.get("/monitor/status")
 async def monitor_status(request: Request) -> dict[str, Any]:
     snapshot = await _control_service(request).status()
     return _envelope(request, snapshot.model_dump(mode="json"))
+
+
+@router.get("/observability/rotation")
+async def rotation_status(request: Request) -> dict[str, Any]:
+    try:
+        projection = await asyncio.to_thread(_rotation_status_reader(request))
+    except Exception:
+        projection = invalid_rotation_projection()
+    return _envelope(request, projection.model_dump(mode="json"))
 
 
 @router.post("/monitor/preflight")

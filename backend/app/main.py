@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 import inspect
 import secrets
+from collections.abc import Callable
 
 import httpx
 from fastapi import FastAPI, Request
@@ -14,6 +15,10 @@ from app.application import RawMessageProcessingBoundary
 from app.config import Settings, settings
 from app.database import async_session_factory
 from app.deploy import check_application_readiness, validate_production_config
+from app.deploy.rotation_status import (
+    RotationStatusProjection,
+    read_rotation_status,
+)
 from app.infra.eventbus import InMemoryEventBus
 from app.infra.events import ResourceCreated, ResourceMerged
 from app.infra.logger import get_logger
@@ -88,6 +93,7 @@ def create_app(
     watchlist_service: WatchlistApplicationService | None = None,
     monitor_control_service: MonitorControlService | None = None,
     admin_csrf_token: str | None = None,
+    rotation_status_reader: Callable[[], RotationStatusProjection] | None = None,
 ) -> FastAPI:
     resolved_settings = app_settings or settings
 
@@ -111,6 +117,9 @@ def create_app(
         )
         app.state.watchlist_service = active_watchlist_service
         app.state.monitor_control_service = active_monitor_control
+        app.state.rotation_status_reader = rotation_status_reader or (
+            lambda: read_rotation_status(resolved_settings)
+        )
         app.state.admin_csrf_token = (
             admin_csrf_token or secrets.token_urlsafe(32)
         )
