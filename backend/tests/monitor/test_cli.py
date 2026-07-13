@@ -62,6 +62,7 @@ class FakeBootstrap:
     def __init__(self, *args, **kwargs):
         self.stop_calls = 0
         self.closed = False
+        self.heartbeat_sink = kwargs.get("heartbeat_sink")
         self.__class__.instances.append(self)
 
     def stop(self):
@@ -72,6 +73,7 @@ class FakeBootstrap:
 
     async def aclose(self):
         self.closed = True
+        await self.heartbeat_sink.aclose()
 
 
 def _args(**updates):
@@ -84,14 +86,17 @@ def _args(**updates):
     return argparse.Namespace(**values)
 
 
-async def test_run_command_outputs_machine_parseable_json(monkeypatch) -> None:
+async def test_run_command_outputs_machine_parseable_json(
+    monkeypatch,
+    tmp_path,
+) -> None:
     monkeypatch.setattr(cli, "run_static_startup_preflight", lambda settings: _preflight())
     monkeypatch.setattr(cli, "MonitorBootstrap", FakeBootstrap)
     output = io.StringIO()
 
     exit_code = await cli.run_monitor_command(
         _args(summary_json=True),
-        app_settings=Settings(),
+        app_settings=Settings(HEARTBEAT_PATH=tmp_path / "heartbeat.jsonl"),
         stdout=output,
         install_signal_handlers=False,
     )
@@ -101,6 +106,9 @@ async def test_run_command_outputs_machine_parseable_json(monkeypatch) -> None:
     assert payload["final_state"] == "stopped"
     assert payload["bot_notification_status"] == "disabled_config_missing"
     assert FakeBootstrap.instances[-1].closed is True
+    assert FakeBootstrap.instances[-1].heartbeat_sink.path == (
+        tmp_path / "heartbeat.jsonl"
+    )
 
 
 async def test_run_command_preflight_blocker_returns_two(monkeypatch) -> None:

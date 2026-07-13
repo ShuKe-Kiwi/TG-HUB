@@ -148,6 +148,12 @@ function initOverview() {
       liveness: formatFlag(snapshot.liveness),
       readiness: formatFlag(snapshot.readiness),
       task_owned: formatFlag(snapshot.task_owned),
+      heartbeat_persistence: ({
+        idle: "空闲",
+        ok: "正常",
+        closed: "已关闭",
+        disabled: "未启用",
+      })[snapshot.heartbeat_persistence?.status] ?? "失败",
       last_error_code: snapshot.last_error_code ?? "无",
     };
     for (const [key, value] of Object.entries(values)) {

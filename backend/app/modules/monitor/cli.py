@@ -15,7 +15,9 @@ from app.config import Settings
 from app.infra.logger import setup_logging
 from app.modules.monitor.bootstrap import MonitorBootstrap, MonitorBootstrapResult
 from app.modules.monitor.bootstrap import MonitorAssemblyReport
-from app.modules.monitor.heartbeat import JsonlHeartbeatSink, NullHeartbeatSink
+from app.modules.monitor.heartbeat import (
+    create_heartbeat_sinks,
+)
 from app.modules.monitor.preflight import (
     MonitorStartupPreflightReport,
     run_static_startup_preflight,
@@ -122,11 +124,14 @@ async def run_monitor_command(
         _print_preflight(preflight, json_output=args.summary_json, stream=stdout)
         return 2
 
-    sink = (
-        JsonlHeartbeatSink(args.heartbeat_jsonl)
-        if args.heartbeat_jsonl
-        else NullHeartbeatSink()
-    )
+    heartbeat_path = args.heartbeat_jsonl or app_settings.HEARTBEAT_PATH
+    if app_settings.APP_ENV == "production":
+        private_root = (Path.home() / ".tg-hub").resolve()
+        try:
+            Path(heartbeat_path).expanduser().resolve().relative_to(private_root)
+        except (OSError, ValueError):
+            raise ValueError("HEARTBEAT_PATH_OUTSIDE_PRIVATE_ROOT") from None
+    sink, _ = create_heartbeat_sinks(heartbeat_path)
     bootstrap = MonitorBootstrap(
         app_settings,
         heartbeat_sink=sink,
@@ -166,11 +171,7 @@ async def run_monitor_command(
                         else "disabled_config_missing"
                     ),
                     heartbeat_status=(
-                        "disabled"
-                        if isinstance(sink, NullHeartbeatSink)
-                        else "write_failed"
-                        if sink.error_count
-                        else "enabled"
+                        "write_failed" if sink.error_count else "enabled"
                     ),
                     blockers=["startup_exception"],
                 ),

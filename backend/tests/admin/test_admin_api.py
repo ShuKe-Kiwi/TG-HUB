@@ -14,6 +14,7 @@ from app.modules.monitor.control import (
     MonitorStartResult,
     MonitorStopResult,
 )
+from app.modules.monitor.heartbeat import HeartbeatPersistenceStatus
 from app.modules.monitor.preflight import MonitorStartupPreflightReport
 from app.modules.monitor.watchlist_service import WatchlistApplicationService
 
@@ -72,6 +73,10 @@ def _control_snapshot(revision: str | None) -> MonitorControlSnapshot:
         watchlist_status="valid",
         restart_required=False,
         heartbeat=None,
+        heartbeat_persistence=HeartbeatPersistenceStatus(
+            enabled=True,
+            status="idle",
+        ),
         last_summary=None,
         last_errors=[],
         last_error_code=None,

@@ -12,6 +12,12 @@ from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, settings
 from app.modules.monitor.bootstrap import MonitorBootstrap, MonitorBootstrapResult
+from app.modules.monitor.heartbeat import (
+    HeartbeatPersistenceStatus,
+    HeartbeatSink,
+    JsonlHeartbeatSink,
+    create_heartbeat_sinks,
+)
 from app.modules.monitor.preflight import (
     MonitorStartupPreflightReport,
     run_static_startup_preflight,
@@ -78,6 +84,7 @@ class MonitorControlSnapshot(BaseModel):
     watchlist_status: WatchlistStatus
     restart_required: bool
     heartbeat: MonitorHeartbeat | None
+    heartbeat_persistence: HeartbeatPersistenceStatus
     last_summary: MonitorRuntimeSummary | None
     last_errors: list[MonitorRuntimeError]
     last_error_code: str | None
@@ -116,7 +123,7 @@ class BootstrapLike(Protocol):
     async def aclose(self) -> None: ...
 
 
-BootstrapFactory = Callable[["ControlHeartbeatSink"], BootstrapLike]
+BootstrapFactory = Callable[[HeartbeatSink], BootstrapLike]
 PreflightRunner = Callable[[Settings], MonitorStartupPreflightReport]
 
 
@@ -172,6 +179,7 @@ class MonitorControlService:
         self._task: asyncio.Task[None] | None = None
         self._bootstrap: BootstrapLike | None = None
         self._heartbeat_sink: ControlHeartbeatSink | None = None
+        self._persistence_sink: JsonlHeartbeatSink | None = None
         self._runtime_started_revision: str | None = None
         self._started_at: datetime | None = None
         self._last_summary: MonitorRuntimeSummary | None = None
@@ -187,6 +195,11 @@ class MonitorControlService:
                 self._heartbeat_sink.latest
                 if self._heartbeat_sink is not None
                 else None
+            )
+            persistence_status = (
+                self._persistence_sink.status()
+                if self._persistence_sink is not None
+                else HeartbeatPersistenceStatus(enabled=True, status="idle")
             )
             runtime = getattr(self._bootstrap, "runtime", None)
             runtime_state = getattr(runtime, "state", None)
@@ -233,6 +246,7 @@ class MonitorControlService:
                 watchlist_status=watchlist.status,
                 restart_required=restart_required,
                 heartbeat=heartbeat,
+                heartbeat_persistence=persistence_status,
                 last_summary=self._last_summary,
                 last_errors=last_errors,
                 last_error_code=self._last_error_code,
@@ -280,14 +294,20 @@ class MonitorControlService:
                 self._last_error_code = "MONITOR_PRECHECK_FAILED"
                 raise MonitorControlError("MONITOR_PRECHECK_FAILED")
 
-            sink = ControlHeartbeatSink(self._on_heartbeat)
+            control_sink = ControlHeartbeatSink(self._on_heartbeat)
+            sink, persistence_sink = create_heartbeat_sinks(
+                self.settings.HEARTBEAT_PATH,
+                control_sink=control_sink,
+            )
             try:
                 bootstrap = self._bootstrap_factory(sink)
             except Exception as exc:
+                await sink.aclose()
                 self._last_error_code = "MONITOR_START_FAILED"
                 raise MonitorControlError("MONITOR_START_FAILED") from exc
 
-            self._heartbeat_sink = sink
+            self._heartbeat_sink = control_sink
+            self._persistence_sink = persistence_sink
             self._bootstrap = bootstrap
             self._runtime_started_revision = snapshot.revision
             self._started_at = datetime.now(timezone.utc)

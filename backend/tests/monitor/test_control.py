@@ -15,7 +15,10 @@ from app.modules.monitor.control import (
     MonitorControlService,
 )
 from app.modules.monitor.preflight import MonitorStartupPreflightReport
-from app.modules.monitor.runtime import failed_monitor_runtime_summary
+from app.modules.monitor.runtime import (
+    MonitorHeartbeat,
+    failed_monitor_runtime_summary,
+)
 from app.modules.monitor.watchlist_service import WatchlistApplicationService
 
 
@@ -97,10 +100,14 @@ class FakeBootstrap:
     def __init__(
         self,
         *,
+        heartbeat_sink=None,
+        emit_heartbeat: bool = False,
         finish_on_stop: bool = True,
         result: MonitorBootstrapResult | None = None,
     ) -> None:
         self.runtime = FakeRuntime()
+        self.heartbeat_sink = heartbeat_sink
+        self.emit_heartbeat = emit_heartbeat
         self.finish_on_stop = finish_on_stop
         self.result = result or _bootstrap_result()
         self.started = asyncio.Event()
@@ -112,6 +119,17 @@ class FakeBootstrap:
         self.runtime.state = "listening"
         self.runtime.connected = True
         self.runtime.handler_registered = True
+        if self.heartbeat_sink is not None and self.emit_heartbeat:
+            await self.heartbeat_sink.emit(
+                MonitorHeartbeat.model_construct(
+                    monitor_state="listening",
+                    liveness="yes",
+                    readiness="yes",
+                    connected="yes",
+                    handler_registered="yes",
+                    uptime_seconds=1.0,
+                )
+            )
         self.started.set()
         await self.finish.wait()
         self.runtime.state = self.result.runtime.final_state
@@ -124,6 +142,8 @@ class FakeBootstrap:
 
     async def aclose(self) -> None:
         self.close_calls += 1
+        if self.heartbeat_sink is not None:
+            await self.heartbeat_sink.aclose()
 
 
 class BootstrapFactory:
@@ -132,18 +152,31 @@ class BootstrapFactory:
         *,
         finish_on_stop: bool = True,
         result: MonitorBootstrapResult | None = None,
+        emit_heartbeat: bool = False,
     ) -> None:
         self.finish_on_stop = finish_on_stop
         self.result = result
+        self.emit_heartbeat = emit_heartbeat
         self.instances: list[FakeBootstrap] = []
 
     def __call__(self, sink) -> FakeBootstrap:
         instance = FakeBootstrap(
+            heartbeat_sink=sink,
+            emit_heartbeat=self.emit_heartbeat,
             finish_on_stop=self.finish_on_stop,
             result=self.result,
         )
         self.instances.append(instance)
         return instance
+
+
+class RaisingBootstrapFactory:
+    def __init__(self) -> None:
+        self.sink = None
+
+    def __call__(self, sink):
+        self.sink = sink
+        raise RuntimeError("construction failed")
 
 
 def _service(
@@ -158,7 +191,10 @@ def _service(
     watchlist = WatchlistApplicationService(path=path)
     resolved_factory = factory or BootstrapFactory()
     service = MonitorControlService(
-        Settings(WATCHLIST_PATH=path),
+        Settings(
+            WATCHLIST_PATH=path,
+            HEARTBEAT_PATH=tmp_path / "runtime" / "heartbeat.jsonl",
+        ),
         watchlist_service=watchlist,
         bootstrap_factory=resolved_factory,
         preflight_runner=lambda settings: _preflight(preflight_status),
@@ -177,6 +213,7 @@ async def test_initial_state_is_stopped_with_server_allowed_actions(tmp_path: Pa
     assert status.allowed_actions.can_start is True
     assert status.allowed_actions.can_stop is False
     assert status.restart_required is False
+    assert status.heartbeat_persistence.status == "idle"
 
 
 async def test_start_is_accepted_without_waiting_for_runtime_end(tmp_path: Path) -> None:
@@ -194,6 +231,26 @@ async def test_start_is_accepted_without_waiting_for_runtime_end(tmp_path: Path)
     assert status.readiness == "yes"
     assert status.allowed_actions.can_start is False
     assert status.allowed_actions.can_stop is True
+    await service.stop()
+    assert (await service.status()).heartbeat_persistence.status == "closed"
+
+
+async def test_admin_handoff_persists_heartbeat_and_projects_status(
+    tmp_path: Path,
+) -> None:
+    factory = BootstrapFactory(emit_heartbeat=True)
+    service, _, _ = _service(tmp_path, factory=factory)
+
+    await service.start()
+    await factory.instances[0].started.wait()
+    status = await service.status()
+
+    assert status.heartbeat_persistence.status == "ok"
+    heartbeat_path = tmp_path / "runtime" / "heartbeat.jsonl"
+    assert heartbeat_path.is_file()
+    assert json.loads(heartbeat_path.read_text(encoding="utf-8"))[
+        "monitor_state"
+    ] == "listening"
     await service.stop()
 
 
@@ -219,6 +276,22 @@ async def test_preflight_failure_prevents_task_creation(tmp_path: Path) -> None:
     assert exc_info.value.error_code == "MONITOR_PRECHECK_FAILED"
     assert factory.instances == []
     assert (await service.status()).control_state == "stopped"
+
+
+async def test_bootstrap_construction_failure_closes_unowned_sink(
+    tmp_path: Path,
+) -> None:
+    factory = RaisingBootstrapFactory()
+    service, _, _ = _service(tmp_path, factory=factory)
+
+    with pytest.raises(MonitorControlError) as exc_info:
+        await service.start()
+
+    assert exc_info.value.error_code == "MONITOR_START_FAILED"
+    assert factory.sink is not None
+    statuses = factory.sink.statuses()
+    assert len(statuses) == 1
+    assert statuses[0].status == "closed"
 
 
 async def test_expected_revision_conflict_prevents_start(tmp_path: Path) -> None:
