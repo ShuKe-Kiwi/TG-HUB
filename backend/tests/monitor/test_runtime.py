@@ -27,6 +27,13 @@ class FakeMessage:
 class FakeEvent:
     chat_id: int | None
     message: FakeMessage
+    chat: Any | None = None
+
+
+@dataclass
+class FakeChat:
+    title: str
+    username: str | None = None
 
 
 @dataclass
@@ -437,7 +444,11 @@ async def test_runtime_handoff_counts_duplicate_and_rejected_results() -> None:
     task = asyncio.create_task(runtime.run())
     await asyncio.wait_for(client.registered.wait(), timeout=1)
     await client.emit(
-        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+        FakeEvent(
+            chat_id=-1001,
+            message=FakeMessage(id=1, message="家业 A"),
+            chat=FakeChat(title="影视分享站", username="movie_updates"),
+        )
     )
     await client.emit(
         FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 B"))
@@ -567,7 +578,11 @@ async def test_runtime_processes_stored_and_duplicate_canonical_raw_ids() -> Non
     await asyncio.wait_for(client.registered.wait(), timeout=1)
     await asyncio.wait_for(_wait_for(lambda: len(heartbeats) >= 1), timeout=1)
     await client.emit(
-        FakeEvent(chat_id=-1001, message=FakeMessage(id=1, message="家业 A"))
+        FakeEvent(
+            chat_id=-1001,
+            message=FakeMessage(id=1, message="家业 A"),
+            chat=FakeChat(title="影视分享站", username="movie_updates"),
+        )
     )
     await client.emit(
         FakeEvent(chat_id=-1001, message=FakeMessage(id=2, message="家业 B"))
@@ -599,6 +614,23 @@ async def test_runtime_processes_stored_and_duplicate_canonical_raw_ids() -> Non
     assert heartbeats[-1].process_attempt_total == 2
     assert heartbeats[-1].process_success_total == 1
     assert heartbeats[-1].process_already_done_total == 1
+    assert [match.source_message_id for match in heartbeats[-1].recent_matches] == [
+        "1",
+        "2",
+    ]
+    assert all(
+        match.source_ref == "-1001"
+        and match.matched_titles == ["家业"]
+        for match in heartbeats[-1].recent_matches
+    )
+    assert heartbeats[-1].recent_matches[0].source_label == "影视分享站"
+    assert heartbeats[-1].recent_matches[0].source_username == "movie_updates"
+    serialized = json.dumps(
+        heartbeats[-1].model_dump(mode="json"),
+        ensure_ascii=False,
+    )
+    assert "家业 A" not in serialized
+    assert "家业 B" not in serialized
 
 
 @pytest.mark.asyncio

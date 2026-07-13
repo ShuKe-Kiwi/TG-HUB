@@ -87,6 +87,8 @@ async def test_overview_page_renders_local_shell_and_csrf_meta(tmp_path: Path) -
     assert 'id="start-monitor"' in response.text
     assert 'id="preflight-dialog"' in response.text
     assert 'id="preflight-result"' in response.text
+    assert 'id="match-list"' in response.text
+    assert "最近命中" in response.text
     assert "must-not-render" not in response.text
     assert control.shutdown_calls == 1
 

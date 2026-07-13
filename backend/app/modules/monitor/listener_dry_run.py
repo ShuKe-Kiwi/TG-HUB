@@ -224,10 +224,15 @@ class TelethonIncomingMessageAdapter:
             "date",
             None,
         )
+        chat = getattr(event, "chat", None)
+        source_label = getattr(chat, "title", None)
+        source_username = getattr(chat, "username", None)
 
         return IncomingMessage(
             source_ref=str(channel_id),
             source_message_id=message_id,
+            source_label=source_label,
+            source_username=source_username,
             text=text,
             caption=caption,
             raw_payload=None,

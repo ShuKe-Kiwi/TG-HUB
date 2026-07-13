@@ -13,6 +13,8 @@ class IncomingMessage(BaseModel):
 
     source_ref: str
     source_message_id: str | int
+    source_label: str | None = None
+    source_username: str | None = None
     text: str | None = None
     caption: str | None = None
     raw_payload: dict[str, Any] | None = None

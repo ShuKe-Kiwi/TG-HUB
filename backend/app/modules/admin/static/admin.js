@@ -165,7 +165,22 @@ function initOverview() {
       node.textContent = heartbeat[key] ?? summary[key] ?? 0;
     });
     renderErrors(snapshot.last_errors ?? []);
+    renderMatches(heartbeat.recent_matches ?? []);
     updateRefreshTime();
+  }
+
+  function renderMatches(matches) {
+    const body = document.querySelector("#match-list");
+    if (!matches.length) {
+      body.innerHTML = '<tr><td colspan="4" class="empty-cell">暂无标题命中</td></tr>';
+      return;
+    }
+    body.innerHTML = matches.slice(-10).reverse().map((item) => {
+      const label = item.source_label || (item.source_username ? `@${item.source_username}` : item.source_ref);
+      const identity = item.source_username ? `@${item.source_username}` : item.source_ref;
+      const secondary = identity !== label ? `<div class="row-subtle">${escapeHtml(identity)}</div>` : "";
+      return `<tr><td><div class="row-title">${escapeHtml(label)}</div>${secondary}</td><td><div class="match-titles">${(item.matched_titles ?? []).map((title) => `<span class="match-title">${escapeHtml(title)}</span>`).join("")}</div></td><td>${escapeHtml(item.source_message_id)}</td><td>${formatDate(item.matched_at)}</td></tr>`;
+    }).join("");
   }
 
   function renderErrors(errors) {

@@ -189,6 +189,19 @@ class MonitorHealth(BaseModel):
     readiness: ReportFlag
 
 
+class RecentMatch(BaseModel):
+    """Bounded, content-free match evidence for local observability."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source_ref: str
+    source_label: str | None = None
+    source_username: str | None = None
+    source_message_id: str
+    matched_titles: list[str]
+    matched_at: datetime
+
+
 class MonitorHeartbeat(BaseModel):
     """Desensitized heartbeat payload."""
 
@@ -202,6 +215,7 @@ class MonitorHeartbeat(BaseModel):
     resolved_channel_count: int
     events_seen_total: int
     events_matched_total: int
+    recent_matches: list[RecentMatch] = Field(default_factory=list)
     events_rejected_total: int
     ingest_attempt_total: int
     ingest_stored_total: int
@@ -359,6 +373,7 @@ class MonitorRuntime:
 
         self.events_seen_total = 0
         self.events_matched_total = 0
+        self.recent_matches: list[RecentMatch] = []
         self.events_rejected_total = 0
         self.ingest_attempt_total = 0
         self.ingest_stored_total = 0
@@ -579,6 +594,17 @@ class MonitorRuntime:
             if result.matched:
                 self.events_matched_total += 1
                 self.last_matched_event_at = self.last_event_at
+                self.recent_matches.append(
+                    RecentMatch(
+                        source_ref=incoming.source_ref,
+                        source_label=incoming.source_label,
+                        source_username=incoming.source_username,
+                        source_message_id=str(incoming.source_message_id),
+                        matched_titles=result.matched_titles,
+                        matched_at=self.last_event_at,
+                    )
+                )
+                self.recent_matches = self.recent_matches[-10:]
                 await self._ingest_matched(incoming)
             else:
                 self.events_rejected_total += 1
@@ -810,6 +836,7 @@ class MonitorRuntime:
             resolved_channel_count=len(self.resolved_channel_ids),
             events_seen_total=self.events_seen_total,
             events_matched_total=self.events_matched_total,
+            recent_matches=self.recent_matches,
             events_rejected_total=self.events_rejected_total,
             ingest_attempt_total=self.ingest_attempt_total,
             ingest_stored_total=self.ingest_stored_total,

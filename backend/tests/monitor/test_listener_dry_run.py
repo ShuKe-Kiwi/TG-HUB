@@ -23,6 +23,7 @@ class FakeMessage:
 class FakeEvent:
     chat_id: int | None
     message: FakeMessage
+    chat: Any | None = None
 
 
 @dataclass
