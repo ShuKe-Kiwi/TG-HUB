@@ -85,6 +85,7 @@ def test_rotation_lifecycle_scripts_keep_3d1_boundary() -> None:
     assert "app.deploy.rotation_agent remove-install" in uninstall
     assert "app.deploy.rotation_status" in status
     assert 'exec "$BACKEND/.venv/bin/python"' in status
+    assert 'cd "$BACKEND"' in status
 
     combined = install + uninstall + status
     assert "launchctl kickstart" not in combined
