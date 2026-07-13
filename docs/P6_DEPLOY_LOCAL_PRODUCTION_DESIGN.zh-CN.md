@@ -37,7 +37,7 @@ P6-Deploy 通过后，管理员应能：
 macOS launchd (one service)
         |
         v
-uvicorn app.main:app --host 127.0.0.1 --port 8010
+uvicorn app.main:app --host "$ADMIN_BIND_HOST" --port "$ADMIN_PORT"
         |
         +-> local Admin UI / API
         +-> MonitorControlService (single task owner)
@@ -202,12 +202,70 @@ plist 结构固定包含：
 16 static preflight failed
 ```
 
+### 6.1 永久错误与临时错误
+
+`KeepAlive.SuccessfulExit=false` 无法按退出码区分永久错误与临时错误。若把所有 `10–16` 原样返回给 launchd，会形成永久配置错误的无限重启循环。
+
+因此 wrapper 对 launchd 的最终退出语义固定为：
+
+```text
+permanent startup blocker
+- internal code: 10 / 11 / 12 / 14 / 15 / 16
+- write desensitized deploy-state.json
+- wrapper exit to launchd: 0
+- launchd does not restart
+
+transient database unavailable
+- internal code: 13
+- wrapper exit to launchd: non-zero
+- launchd retries with ThrottleInterval
+
+uvicorn unexpected crash
+- wrapper preserves non-zero exit
+- launchd retries with ThrottleInterval
+
+operator stop / graceful shutdown
+- exit 0
+- launchd does not restart
+```
+
+“有界重启”在本阶段表示有节流且永久 blocker 不重试，不表示 launchd 提供最大重试次数。`deploy-state.json` 只保存稳定 error code、时间和状态，不保存异常原文或配置值。
+
+### 6.2 launchctl 固定协议
+
+用户级 service domain 固定为：
+
+```text
+gui/$UID/com.tghub.service
+```
+
+只使用现代命令：
+
+```text
+launchctl bootstrap gui/$UID <plist>
+launchctl bootout gui/$UID/com.tghub.service
+launchctl kickstart gui/$UID/com.tghub.service
+launchctl print gui/$UID/com.tghub.service
+```
+
+禁止使用旧式 `launchctl load/unload`。`stop.sh` 使用 `bootout`，确保正常退出后不会被 KeepAlive 重新拉起。
+
+### 6.3 plist 安装规则
+
+- plist 中通过 `EnvironmentVariables` 只写非敏感的绝对 `TG_HUB_ENV_FILE` 路径；
+- 该路径必须指向 `~/.tg-hub/production.env`，不得 fallback 到仓库 `.env`；
+- 模板先渲染到同目录临时文件；
+- `plutil -lint` 通过后再原子 rename；
+- plist 权限固定为 `0600`；
+- 重复安装必须幂等或返回稳定 `SERVICE_ALREADY_INSTALLED`；
+- install/uninstall 不修改 production.env、watchlist 或 Telethon session。
+
 `start.sh` 不解析敏感 env，也不充当 supervisor。它只解析参数、调用共享 Python preflight，然后执行：
 
 ```text
 exec "$VENV/bin/python" -m uvicorn app.main:app \
-  --host 127.0.0.1 \
-  --port 8010 \
+  --host "$ADMIN_BIND_HOST" \
+  --port "$ADMIN_PORT" \
   --workers 1 \
   --no-access-log
 ```
@@ -234,6 +292,43 @@ exec "$VENV/bin/python" -m uvicorn app.main:app \
 shell 和 lifespan 不各自实现一套 static preflight；共用 `deploy/preflight.py` 或生产配置模块中的稳定检查函数。
 
 任何前置失败都应以稳定退出码结束，让 launchd 日志明确记录 blocker；不得进入半启动状态。
+
+### 6.4 Startup preflight CLI
+
+Deploy-2 实现前必须提供可直接执行的共享 CLI：
+
+```text
+TG_HUB_ENV_FILE=/absolute/path/production.env \
+  "$VENV/bin/python" -m app.deploy.preflight startup
+```
+
+它与运行中的 `/health/ready` 不同，不依赖 application assembly。固定检查：
+
+- env 文件存在且权限不宽于 `0600`；
+- env 可由 Python parser 加载；
+- `APP_ENV=production`；
+- `CONFIG_SCHEMA_VERSION=1`；
+- `ADMIN_BIND_HOST=127.0.0.1`；
+- `ADMIN_PORT` 在 `1..65535`；
+- 私有路径位于 `~/.tg-hub`；
+- venv 和工作目录存在；
+- 端口可用；
+- 数据库基础连通；
+- migration current 等于 head；
+- watchlist 可读且 schema 有效。
+
+输出固定为脱敏 JSON，并映射稳定内部退出码。缺少 `TG_HUB_ENV_FILE`、env 不存在或 `APP_ENV` 不是 production 时 fail closed，禁止读取默认 `.env`。
+
+### 6.5 单实例和端口规则
+
+- LaunchAgent label 是服务所有权主标识；
+- 不使用 PID 文件作为运行真相；
+- `status.sh` 综合 `launchctl print`、`/health/live` 和 `/health/ready`；
+- stale state 文件不得被解释为 running；
+- 安装或启动前若 `ADMIN_PORT` 已被任何进程占用，返回 `PORT_OCCUPIED`，不自动 kill；
+- 端口预检只能减少误操作，最终仍以 Uvicorn bind 成功为准；
+- 当前手动运行的 tg-hub 必须由管理员优雅停止后才能安装 LaunchAgent；
+- 启动命令读取经过校验的 `ADMIN_BIND_HOST/ADMIN_PORT`，不得另行写死一套端口。
 
 ## 7. Monitor 自动启动
 
@@ -524,7 +619,7 @@ error_code: str | null
 - stale PID/state 不被 `status.sh` 误报为 running；
 - SIGTERM 优雅停止 Monitor；
 - 正常 stop 后 launchd 不立即重启；
-- 异常退出后 launchd 有界重启；
+- 临时故障或异常崩溃后 launchd 按节流策略重启，永久启动 blocker 不重启；
 - 数据库断开时 readiness 为 503、liveness 仍为 200；
 - readiness DB timeout 在固定短时间内返回；
 - Monitor auto-start 失败时 UI 仍可用且状态可见；
@@ -584,7 +679,7 @@ P6-Deploy-5
 deployment guide + operations runbook + full smoke acceptance + Mac reboot manual acceptance
 ```
 
-每个子阶段单独提交，不把系统安装动作与代码实现混在同一 commit。当前只批准进入 P6-Deploy-1；Deploy-2 至 5 不自动批准，必须逐阶段评审。
+每个子阶段单独提交，不把系统安装动作与代码实现混在同一 commit。P6-Deploy-1 已完成；P6-Deploy-2 已完成设计评审并允许进入实现；Deploy-3 至 5 不自动批准，必须逐阶段评审。
 
 ## 17. 完成标准
 
