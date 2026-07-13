@@ -7,11 +7,13 @@ import secrets
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.application import RawMessageProcessingBoundary
 from app.config import Settings, settings
 from app.database import async_session_factory
+from app.deploy import check_application_readiness, validate_production_config
 from app.infra.eventbus import InMemoryEventBus
 from app.infra.events import ResourceCreated, ResourceMerged
 from app.infra.logger import get_logger
@@ -111,6 +113,12 @@ def create_app(
         app.state.monitor_control_service = active_monitor_control
         app.state.admin_csrf_token = (
             admin_csrf_token or secrets.token_urlsafe(32)
+        )
+        app.state.production_config_report = validate_production_config(
+            resolved_settings
+        )
+        app.state.assembly_ready = (
+            app.state.production_config_report.status == "pass"
         )
 
         active_transport = bot_transport
@@ -267,6 +275,38 @@ def create_app(
             "app": resolved_settings.APP_NAME,
             "env": resolved_settings.APP_ENV,
         }
+
+    @application.get("/health/live")
+    async def health_live() -> dict[str, str]:
+        return {"status": "ok", "service": resolved_settings.APP_NAME}
+
+    @application.get("/health/ready")
+    async def health_ready(request: Request) -> JSONResponse:
+        control = getattr(request.app.state, "monitor_control_service", None)
+        monitor_state = "stopped"
+        monitor_error_code = None
+        if control is not None:
+            try:
+                snapshot = await control.status()
+                monitor_state = snapshot.control_state
+                monitor_error_code = snapshot.last_error_code
+            except Exception:
+                monitor_state = "unknown"
+                monitor_error_code = "MONITOR_STATUS_UNAVAILABLE"
+        report = await check_application_readiness(
+            resolved_settings,
+            session_factory=session_factory,
+            assembly_ready=bool(
+                getattr(request.app.state, "assembly_ready", False)
+            ),
+            monitor_state=monitor_state,
+            monitor_error_code=monitor_error_code,
+        )
+        return JSONResponse(
+            status_code=200 if report.status == "ready" else 503,
+            content=report.model_dump(mode="json"),
+            headers={"Cache-Control": "no-store"},
+        )
 
     return application
 

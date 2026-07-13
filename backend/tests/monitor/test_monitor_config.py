@@ -57,6 +57,20 @@ def _sample_to_message(
     )
 
 
+def _fixture_watchlist(
+    samples: list[ListeningChannelSample],
+) -> WatchlistConfig:
+    titles = dict.fromkeys(
+        title
+        for sample in samples
+        for title in sample.expected_watch_titles
+    )
+    return WatchlistConfig(
+        source_channels=[],
+        watch_titles=[{"title": title} for title in titles],
+    )
+
+
 def test_settings_exposes_default_monitor_config_paths() -> None:
     configured = Settings()
 
@@ -90,12 +104,12 @@ def test_load_listening_channel_samples_validates_external_config() -> None:
 
 
 @pytest.mark.skipif(
-    not WATCHLIST_PATH.exists() or not LISTENING_CHANNEL_SAMPLES_PATH.exists(),
+    not LISTENING_CHANNEL_SAMPLES_PATH.exists(),
     reason=_MISSING_EXTERNAL_CONFIG,
 )
 def test_p6_2b_offline_samples_filter_by_watch_titles_only() -> None:
-    watchlist = load_watchlist(WATCHLIST_PATH)
     samples = load_listening_channel_samples(LISTENING_CHANNEL_SAMPLES_PATH)
+    watchlist = _fixture_watchlist(samples)
 
     results = []
     for index, sample in enumerate(samples, start=1):
@@ -111,12 +125,12 @@ def test_p6_2b_offline_samples_filter_by_watch_titles_only() -> None:
 
 
 @pytest.mark.skipif(
-    not WATCHLIST_PATH.exists() or not LISTENING_CHANNEL_SAMPLES_PATH.exists(),
+    not LISTENING_CHANNEL_SAMPLES_PATH.exists(),
     reason=_MISSING_EXTERNAL_CONFIG,
 )
 def test_p6_2b_acceptance_report_counts() -> None:
-    watchlist = load_watchlist(WATCHLIST_PATH)
     samples = load_listening_channel_samples(LISTENING_CHANNEL_SAMPLES_PATH)
+    watchlist = _fixture_watchlist(samples)
 
     results = [
         filter_message(_sample_to_message(sample, message_id=index), watchlist)

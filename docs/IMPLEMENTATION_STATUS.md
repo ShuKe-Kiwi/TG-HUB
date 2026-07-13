@@ -1,7 +1,7 @@
 # TG-HUB 实施进度
 
 > 架构基准：docs/ARCHITECTURE.md V2.2
-> 最后更新：2026-07-10
+> 最后更新：2026-07-13
 
 ---
 
@@ -30,6 +30,145 @@
 | P6-2F | RawMessage -> Parser / Normalizer / Dedup 编排 | ✅ 完成 | 20/20 |
 | P6-2G | EventBus / Bot 查询通知接入 | ✅ 完成 | 9/9 |
 | P6-2H | Monitor -> ingest -> process handoff 编排 | ✅ 完成 | 6/6 |
+| P6-2I | Monitor CLI / bootstrap / static preflight / 使用说明 | ✅ 完成 | 已验收 |
+| P6-2J | 本机最小可视化管理台 | ✅ 完成 | 447 全量通过（验收时） |
+| P6-2J+ | 最近命中脱敏摘要与频道昵称展示 | ✅ 完成 | 44 相关测试通过 |
+| P6-2K-0 | 外部平台热播数据源可行性调查与设计 | ✅ 设计锁定，延期实现 | 文档审查通过 |
+| P6-2K-1A | Trending core contracts | ⏸ 暂停（项目完成后追加） | - |
+| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 453 全量通过 |
+| P6-Deploy-1 | health/readiness + production config contract | ✅ 完成 | 6/6 新增测试 |
+| P6-Deploy-2 | launchd + lifecycle scripts | ⏳ 待评审 | - |
+
+---
+
+## 当前状态摘要
+
+截至 2026-07-13：
+
+- 主链路已接通：`Monitor -> IncomingMessage -> ingest -> process -> EventBus / Bot notification`。
+- 本机管理台已支持 watchlist 管理、静态预检、Monitor 启停、状态轮询和脱敏错误展示。
+- 管理台可展示最近 10 条命中摘要，包括频道昵称、`@username`/numeric ID、命中资源名、消息 ID 和时间。
+- P6-2K-0 已锁定为独立运营资源发现模块，不依赖 MonitorRuntime，也不自动修改 watchlist。
+- P6-2K 已暂停：设计保留，项目完成前不实现任何平台 adapter、scheduler、catalog service 或热播资源页面。
+- `P6-Deploy-1` 已完成，完整回归 `453 passed`；下一步仅评审 `P6-Deploy-2`，不自动进入实现。
+- 当前外部 `watchlist.json` 已由运营修改，两个旧 P6-2B 外部 fixture 测试可能因样本期待标题与运行时 watchlist 不一致而失败；这不代表 Parser/Monitor 回归失败，后续应让离线 fixture 使用独立固定 watchlist。
+
+---
+
+## P6-Deploy-1 详细记录
+
+### 完成日期
+2026-07-13
+
+### 实现内容
+
+- `TG_HUB_ENV_FILE` 由 pydantic-settings/python-dotenv 解析，禁止 shell source/eval。
+- 增加 `CONFIG_SCHEMA_VERSION`、loopback 管理地址、auto-start 和私有运行路径配置。
+- production config contract 校验 schema、loopback 和 `~/.tg-hub` 私有路径边界。
+- 新增共享、脱敏的 application readiness preflight。
+- readiness 检查数据库 `SELECT 1`、Alembic head、watchlist schema 和 assembly。
+- `/health/live` 不访问数据库、Telegram 或 watchlist。
+- `/health/ready` 使用短 timeout，失败返回稳定错误码和 `503`。
+- Monitor operational state 只作为观察字段，不影响 application readiness。
+- 增加不含真实凭据的 `.env.production.example`。
+- P6-2B 离线 fixture 与运营 watchlist 解耦。
+
+### 验收
+
+- Deploy-1 新增测试：`6/6`。
+- 完整回归：`453 passed`。
+- 未访问真实 Telegram 或 Bot API。
+- 未安装 launchd，未实现日志轮转或备份。
+
+---
+
+## P6-2K-0 详细记录
+
+### 完成日期
+2026-07-12
+
+### 设计结论
+
+- 新模块固定为 `app/modules/trending/`，与 Monitor、RawMessage、Resource 和 Admin adapter 分层。
+- 爱奇艺与 Netflix 官方结构化 Top 10 数据作为首批正式候选。
+- Netflix 自动采集优先使用官方 XLSX，不以 Tudum HTML DOM 为首选协议。
+- WeTV 与中国大陆腾讯视频严格区分；中国大陆来源保持 `research_pending`。
+- 优酷仅作为 probationary 官方目录候选，默认 feature flag disabled。
+- Disney+ Top 10 自动采集延期；editorial catalog 只能作为独立候选来源。
+- DTO 已固定榜单身份、统计周期、状态证据、来源 fingerprint 和 document hash。
+- 跨平台 merge 降级为 `TrendingDisplayGroup` 候选展示分组，不确认作品身份。
+- 快照固定为 per-source last-success snapshot + catalog projection + manifest 提交点。
+- `FetchOutcome` 区分 success、not_modified、empty_confirmed、schema_drift、访问拒绝、限流、超时和来源错误。
+- 加入监听必须经过 `WatchTitleCandidate -> operator confirm -> WatchlistApplicationService`。
+
+### 阶段边界
+
+- ✅ 只完成可行性调查和设计锁定
+- ✅ 未编写真实平台 collector
+- ✅ 未访问登录 Cookie、会员 token 或个人观看数据
+- ✅ 未自动修改 `watch_titles`
+- ✅ 未接入 MonitorRuntime、RawMessage、Resource 或 EventBus
+- ❌ 未实现 Trending core contracts
+- ❌ 未实现平台 adapter
+- ❌ 未实现 catalog snapshot runtime
+- ❌ 未实现热播资源管理页面
+
+### 延期决定
+
+P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
+
+当前主线已进入 `P6-Deploy`，下一步为 `P6-Deploy-1`。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+
+---
+
+## P6-2J 详细记录
+
+### 完成日期
+2026-07-12
+
+### 实现内容
+
+- `WatchlistApplicationService`：schema 校验、revision 冲突、原子替换、权限和显式恢复。
+- `MonitorControlService`：单 task 生命周期、start/stop 幂等、preflight、shutdown 和 restart_required。
+- 本机 Admin API：Host/Origin/CSRF/JSON 防护、稳定错误码、no-store 和脱敏响应。
+- 管理页面：运行概览、监听配置、频道和资源名 CRUD、响应式布局。
+- 添加频道时按 numeric ID、`@username` 和 `t.me URL` 语义去重。
+- 预检弹窗明确显示“预检通过，可以启动”或“预检未通过”，并中文化明细和阻塞项。
+- 最近命中列表保留最多 10 条脱敏摘要，不包含正文、caption、链接或 raw payload。
+- 频道展示优先昵称，其次 `@username`，最后 numeric ID。
+
+### 验收
+
+- P6-2J-5 完整回归在验收时为 `447 passed`。
+- Playwright 桌面和 `390 x 844` 移动视口通过。
+- 浏览器控制台 `0 errors / 0 warnings`。
+- 浏览器验收未访问 Telegram API、Bot API 或真实运行时 watchlist。
+- 最近命中及昵称增强相关测试 `44 passed`。
+
+### 边界确认
+
+- ✅ 管理台只限 loopback 本机访问
+- ✅ Admin UI/API 不直接操作 Telethon client 或 DB Session
+- ✅ 配置保存继续经过 WatchlistApplicationService
+- ✅ Monitor 启停继续经过 application control boundary
+- ❌ 未完成生产部署、进程守护或开机启动
+- ❌ 未实现多管理员、远程访问或多实例选主
+- ❌ 未实现可靠通知 Outbox 和历史补偿
+
+---
+
+## P6-2I 详细记录
+
+### 完成日期
+2026-07-11
+
+### 实现内容
+
+- 增加 Monitor 启动 CLI 和 bootstrap 装配入口。
+- 启动前执行 static preflight，检查 watchlist、Telethon、Telegram API、session 路径和数据库配置。
+- 增加 heartbeat sink 和稳定启动报告。
+- 更新中文使用说明，固定本机启动、预检、运行和停止流程。
+- CLI/bootstrap 只负责装配与生命周期，不承载 Parser、Dedup 或通知业务逻辑。
 
 ---
 

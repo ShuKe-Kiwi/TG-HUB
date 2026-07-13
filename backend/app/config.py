@@ -1,5 +1,6 @@
-"""Application configuration — loaded from environment variables / .env file."""
+"""Application configuration loaded without shell evaluation."""
 
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,10 +14,13 @@ class Settings(BaseSettings):
     )
 
     # App
+    CONFIG_SCHEMA_VERSION: int = 1
     APP_NAME: str = "tg-hub"
     APP_ENV: str = "development"
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
+    ADMIN_BIND_HOST: str = "127.0.0.1"
+    ADMIN_PORT: int = 8010
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://localhost/tg_hub_dev"
@@ -42,6 +46,18 @@ class Settings(BaseSettings):
     MONITOR_RECONNECT_STABLE_RESET_SECONDS: int = 300
     MONITOR_DRAIN_TIMEOUT_SECONDS: int = 10
     MONITOR_MAX_INFLIGHT_EVENTS: int = 100
+    MONITOR_AUTO_START: bool = False
+
+    # Private runtime paths
+    HEARTBEAT_PATH: Path = Path("~/.tg-hub/runtime/heartbeat.jsonl")
+    LOG_DIR: Path = Path("~/.tg-hub/logs")
+    BACKUP_DIR: Path = Path("~/.tg-hub/backups")
 
 
-settings = Settings()
+def load_settings(env_file: str | Path | None = None) -> Settings:
+    """Load a dotenv file through pydantic, never through a shell."""
+    selected = env_file or os.environ.get("TG_HUB_ENV_FILE") or ".env"
+    return Settings(_env_file=Path(selected).expanduser())
+
+
+settings = load_settings()
