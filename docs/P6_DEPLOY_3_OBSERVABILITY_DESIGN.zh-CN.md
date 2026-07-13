@@ -5,7 +5,7 @@
 > 前置：P6-Deploy-2 已完成真实安装验收
 > BLOCKERS：0
 > ALLOW_P6_DEPLOY_3A_IMPLEMENTATION：yes
-> ALLOW_P6_DEPLOY_3B_IMPLEMENTATION：no
+> ALLOW_P6_DEPLOY_3B_IMPLEMENTATION：yes
 > ALLOW_P6_DEPLOY_3C_IMPLEMENTATION：no
 > ALLOW_P6_DEPLOY_3D_IMPLEMENTATION：no
 
@@ -456,7 +456,7 @@ P6-Deploy-3D
 rotation LaunchAgent + status fields + real rotation acceptance
 ```
 
-每个子阶段单独评审和提交。当前只批准 P6-Deploy-3A；3B、3C、3D 不自动授权。
+每个子阶段单独评审和提交。P6-Deploy-3A 已完成；P6-Deploy-3B 已通过独立实施评审；3C、3D 不自动授权。
 
 ## 16. 评审结论
 
@@ -470,9 +470,9 @@ P6-DEPLOY-3_REVIEW:
   required_clarifications: 0
   allow_design_lock: yes
   allow_P6_Deploy_3A: yes
-  allow_P6_Deploy_3B: no
+  allow_P6_Deploy_3B: yes
   allow_P6_Deploy_3C: no
   allow_P6_Deploy_3D: no
 ```
 
-实施许可严格限定为 P6-Deploy-3A：JSON formatter、event 白名单、非法 event 降级、redaction、stdout/stderr 互斥 filter、第三方 logger 映射、生产 traceback 禁止，以及 LaunchAgent 日志文件名调整。Heartbeat、rotation、retention、online session preflight 和 Deploy-4/5 均未授权。
+P6-Deploy-3A 已完成。当前新增许可严格限定为 P6-Deploy-3B heartbeat 持久化与组合 sink；rotation、retention、online session preflight 和 Deploy-4/5 均未授权。
