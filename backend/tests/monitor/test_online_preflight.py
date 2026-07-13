@@ -159,3 +159,23 @@ async def test_online_preflight_releases_only_after_cancelled_disconnect_settles
         await task
     competitor.acquire()
     competitor.release()
+
+
+async def test_online_preflight_accepts_disconnect_future(tmp_path: Path):
+    configured = _settings(tmp_path, refs=["@example"])
+
+    class FutureDisconnectClient(FakeClient):
+        def disconnect(self):
+            future = asyncio.get_running_loop().create_future()
+            future.set_result(None)
+            self.disconnected = True
+            return future
+
+    client = FutureDisconnectClient()
+    report = await _service(
+        configured,
+        client_factory=lambda settings: client,
+    ).run()
+
+    assert report.status == "pass"
+    assert client.disconnected is True

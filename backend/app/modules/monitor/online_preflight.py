@@ -262,7 +262,7 @@ class OnlineSessionPreflightService:
             )
         finally:
             if client is not None:
-                task = asyncio.create_task(_maybe_await(client.disconnect()))
+                task = asyncio.ensure_future(_maybe_await(client.disconnect()))
                 try:
                     await asyncio.shield(
                         asyncio.wait_for(task, self.disconnect_timeout)
