@@ -138,12 +138,9 @@ def _expected_alembic_heads(alembic_ini: Path) -> set[str]:
 
 
 def _port_available(host: str, port: int) -> bool:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind((host, port))
-    except OSError:
-        return False
-    return True
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.25)
+        return sock.connect_ex((host, port)) != 0
 
 
 async def run_startup_preflight(
@@ -223,10 +220,6 @@ def main() -> int:
     return report.exit_code
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 async def check_application_readiness(
     settings: Settings,
     *,
@@ -290,3 +283,7 @@ async def check_application_readiness(
         ),
         error_code=None if ready else error_code,
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

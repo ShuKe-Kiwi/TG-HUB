@@ -27,3 +27,10 @@ def test_lifecycle_scripts_use_modern_launchctl_and_no_pid_truth() -> None:
     assert "launchctl load" not in combined
     assert "launchctl unload" not in combined
     assert ".pid" not in combined
+
+
+def test_runtime_scripts_use_backend_virtualenv() -> None:
+    for name in ("start.sh", "status.sh"):
+        content = (DEPLOY / name).read_text(encoding="utf-8")
+        assert '"$BACKEND/.venv/bin/python"' in content
+        assert '"$BACKEND/../.venv/bin/python"' not in content
