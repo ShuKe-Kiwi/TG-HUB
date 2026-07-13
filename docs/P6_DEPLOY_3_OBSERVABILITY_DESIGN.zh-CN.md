@@ -6,7 +6,7 @@
 > BLOCKERS：0
 > ALLOW_P6_DEPLOY_3A_IMPLEMENTATION：yes
 > ALLOW_P6_DEPLOY_3B_IMPLEMENTATION：yes
-> ALLOW_P6_DEPLOY_3C_IMPLEMENTATION：no
+> ALLOW_P6_DEPLOY_3C_IMPLEMENTATION：yes
 > ALLOW_P6_DEPLOY_3D_IMPLEMENTATION：no
 
 ## 1. 阶段目标
@@ -223,7 +223,7 @@ heartbeat writer 与 rotator 使用同一个专用内核锁：
 
 `rotate.lock` 只防两个 rotator 并发，`heartbeat.lock` 只协调 writer 与 heartbeat rotation，两者不可互相替代。固定加锁顺序为：先 `rotate.lock`，后 `heartbeat.lock`；writer 只获取 heartbeat lock。
 
-轮转器对 heartbeat 使用同目录原子 rename，再安全创建权限为 `0600` 的新文件；锁释放后下一次 emit 才打开新 inode。
+轮转器对 heartbeat 使用同目录原子 rename，再安全创建权限为 `0600` 的新文件；锁释放后下一次 emit 才打开新 inode。旧 heartbeat pending 是唯一旧 generation，不得原地裁剪；完整行必须复制到派生 temp 后再 gzip，final archive 原子提交后才删除 pending。
 
 验收必须证明：
 
@@ -243,11 +243,16 @@ launchd 长期持有 stdout/stderr 文件描述符，简单 rename 后进程仍�
 acquire rotation lock
 -> copy current file to temporary archive
 -> fsync archive
--> atomic rename archive
+-> atomic rename archive to durable pending
+-> durable phase metadata = snapshot_committed
 -> truncate active file in place
--> release lock
--> gzip completed archive
+-> durable phase metadata = active_truncated
+-> gzip and atomically commit final archive
+-> retention / budget / status update
+-> release rotation lock
 ```
+
+durable pending 不得作为普通 temp 删除。应用日志 pending 必须由独立 durable phase metadata 区分 `snapshot_committed` 与 `active_truncated`；前者不得自动 finalize 或 truncate，后者才允许恢复压缩。崩溃后的下一轮必须先执行对应恢复判定。具体命名、恢复和失败语义以 P6-Deploy-3C 独立实施评审为准。
 
 copy snapshot 后只提交到最后一个完整换行符；临时 archive 的不完整尾部丢弃并计数。状态至少记录 `copied_bytes`、`truncated_bytes` 和 `partial_tail_detected`。
 
@@ -281,6 +286,8 @@ writer_paused: false
 | `app.stderr.log` | 10 MB | 7 | gzip |
 | `heartbeat.jsonl` | 10 MB | 3 | gzip |
 
+全部 final archive 固定保存到 `Settings.LOG_DIR/archive/`，rotation status 与锁保存在 `~/.tg-hub/runtime/`；不得把 archive 写入任意调用方路径。
+
 `10 MB` 是轮转触发阈值，不是 active 文件硬上限。固定检查策略为：每小时检查，并以距上次成功轮转达到 24 小时作为时间保底。两次检查之间 active 文件可能超过阈值，`hard_active_file_limit=none`。
 
 age 不使用持续变化的 active mtime。每个 target 在 rotation status 中独立保存：
@@ -312,7 +319,7 @@ files:
 - `total_observed_bytes` 统计 active、archive、temporary 和 lock，但不宣称整个目录有 250 MB 硬上限；
 - 状态固定包含 `archive_budget_status=within_budget|cleaned|exceeded_unrecoverable` 和 `active_oversize=true|false`。
 
-archive 清理顺序固定为：删除无效 temp、逐 target 执行保留份数、计算全部有效 archive、按 `completed_at` 从旧到新清理超预算 archive。永不删除 active 和本轮未完成提交的 archive。只有清理全部允许删除项后仍超预算，才返回 `exceeded_unrecoverable`。
+archive 清理顺序固定为：删除可证明未提交且可丢弃的 temp、恢复 durable pending、逐 target 执行保留份数、计算全部有效 archive、按 `completed_at` 从旧到新清理超预算 archive。永不删除 active、durable pending 和本轮未完成提交的 archive。只有清理全部允许删除项后仍超预算，才返回 `exceeded_unrecoverable`。
 
 archive 名称固定包含 target、UTC 微秒时间和唯一 run ID，例如：
 
@@ -456,7 +463,7 @@ P6-Deploy-3D
 rotation LaunchAgent + status fields + real rotation acceptance
 ```
 
-每个子阶段单独评审和提交。P6-Deploy-3A 已完成；P6-Deploy-3B 已通过独立实施评审；3C、3D 不自动授权。
+每个子阶段单独评审和提交。P6-Deploy-3A、3B 已完成；P6-Deploy-3C 已通过独立实施评审；3D 不自动授权。
 
 ## 16. 评审结论
 
@@ -471,8 +478,8 @@ P6-DEPLOY-3_REVIEW:
   allow_design_lock: yes
   allow_P6_Deploy_3A: yes
   allow_P6_Deploy_3B: yes
-  allow_P6_Deploy_3C: no
+  allow_P6_Deploy_3C: yes
   allow_P6_Deploy_3D: no
 ```
 
-P6-Deploy-3A 已完成。当前新增许可严格限定为 P6-Deploy-3B heartbeat 持久化与组合 sink；rotation、retention、online session preflight 和 Deploy-4/5 均未授权。
+P6-Deploy-3A、3B 已完成。当前新增许可严格限定为 P6-Deploy-3C rotation engine、retention、archive budget、locks、dry-run 和内部 status persistence；rotation LaunchAgent、在线 session preflight 和 Deploy-4/5 均未授权。3C 的消歧与崩溃恢复契约以 `P6_DEPLOY_3C_ROTATION_IMPLEMENTATION_REVIEW.zh-CN.md` 为准。
