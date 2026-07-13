@@ -137,6 +137,7 @@ function initOverview() {
   const startButton = document.querySelector("#start-monitor");
   const stopButton = document.querySelector("#stop-monitor");
   const preflightButton = document.querySelector("#run-preflight");
+  const onlinePreflightButton = document.querySelector("#run-online-preflight");
 
   function render(snapshot) {
     latest = snapshot;
@@ -170,6 +171,7 @@ function initOverview() {
     startButton.disabled = !snapshot.allowed_actions.can_start;
     stopButton.disabled = !snapshot.allowed_actions.can_stop;
     preflightButton.disabled = !snapshot.allowed_actions.can_preflight;
+    onlinePreflightButton.disabled = !snapshot.allowed_actions.can_preflight;
     document.querySelector("#restart-notice").classList.toggle("hidden", !snapshot.restart_required);
 
     const heartbeat = snapshot.heartbeat ?? {};
@@ -291,6 +293,20 @@ function initOverview() {
     finally { setLoading(preflightButton, false); }
   });
 
+  onlinePreflightButton.addEventListener("click", async () => {
+    setLoading(onlinePreflightButton, true);
+    try {
+      const report = await api("/monitor/online-preflight", { method: "POST", body: "{}" });
+      const passed = report.status === "pass";
+      const result = document.querySelector("#online-preflight-result");
+      result.className = `preflight-result ${passed ? "passed" : "failed"}`;
+      result.innerHTML = `<span class="preflight-result-icon" aria-hidden="true">${passed ? "✓" : "!"}</span><div><strong>${passed ? "在线预检通过" : "在线预检未通过"}</strong><p>${passed ? "Session 已授权，所有频道均可解析。" : escapeHtml(report.error_code || "请检查在线预检结果。")}</p></div>`;
+      const content = document.querySelector("#online-preflight-content");
+      content.innerHTML = Object.entries(report).filter(([key]) => !["status", "report_desensitized"].includes(key)).map(([key, value]) => `<div class="report-item"><span>${escapeHtml(onlinePreflightLabels[key] ?? key)}</span><strong class="${preflightValueTone(value)}">${escapeHtml(formatPreflightValue(value))}</strong></div>`).join("");
+      document.querySelector("#online-preflight-dialog").showModal();
+    } finally { setLoading(onlinePreflightButton, false); }
+  });
+
   document.querySelector("#refresh-status").addEventListener("click", () => poll(true));
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(true); });
   poll(true);
@@ -305,11 +321,30 @@ const preflightLabels = {
   session_configured: "Telegram Session",
   session_parent_exists: "Session 目录存在",
   session_parent_writable: "Session 目录可写",
+  session_file_exists: "Session 文件存在",
+  session_file_regular: "Session 文件类型",
+  session_file_permissions: "Session 文件权限",
   database_url_configured: "数据库连接配置",
   enabled_source_channels: "启用频道数",
   invalid_source_channels: "无效频道数",
   enabled_watch_titles: "启用资源名数",
   blockers: "阻塞项",
+};
+
+const onlinePreflightLabels = {
+  error_code: "错误码",
+  session_authorized: "Session 已授权",
+  channel_resolution: "频道解析状态",
+  enabled_channels: "启用频道数",
+  resolved_channels: "成功解析",
+  failed_channels: "解析失败",
+  unattempted_channels: "未尝试",
+  telegram_api_accessed: "已访问 Telegram API",
+  database_accessed: "已访问数据库",
+  parser_called: "已调用 Parser",
+  dedup_called: "已调用 Dedup",
+  notification_sent: "已发送通知",
+  listener_started: "已启动监听",
 };
 
 function formatPreflightValue(value) {

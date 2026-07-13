@@ -46,6 +46,7 @@ from app.modules.bot.transport import (
 from app.modules.resource.query_service import ResourceQueryService
 from app.modules.monitor.control import MonitorControlService
 from app.modules.monitor.watchlist_service import WatchlistApplicationService
+from app.modules.monitor.online_preflight import run_online_session_preflight
 
 setup_logging()
 
@@ -94,6 +95,7 @@ def create_app(
     monitor_control_service: MonitorControlService | None = None,
     admin_csrf_token: str | None = None,
     rotation_status_reader: Callable[[], RotationStatusProjection] | None = None,
+    online_preflight_runner: Callable[[], object] | None = None,
 ) -> FastAPI:
     resolved_settings = app_settings or settings
 
@@ -119,6 +121,9 @@ def create_app(
         app.state.monitor_control_service = active_monitor_control
         app.state.rotation_status_reader = rotation_status_reader or (
             lambda: read_rotation_status(resolved_settings)
+        )
+        app.state.online_preflight_runner = online_preflight_runner or (
+            lambda: run_online_session_preflight(resolved_settings)
         )
         app.state.admin_csrf_token = (
             admin_csrf_token or secrets.token_urlsafe(32)

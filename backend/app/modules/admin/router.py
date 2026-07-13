@@ -143,6 +143,10 @@ def _rotation_status_reader(request: Request):
     return request.app.state.rotation_status_reader
 
 
+def _online_preflight_runner(request: Request):
+    return request.app.state.online_preflight_runner
+
+
 @router.get("/monitor/status")
 async def monitor_status(request: Request) -> dict[str, Any]:
     snapshot = await _control_service(request).status()
@@ -164,6 +168,12 @@ async def monitor_preflight(request: Request) -> dict[str, Any]:
         report = await _control_service(request).run_preflight()
     except MonitorControlError as exc:
         raise _map_control_error(exc) from None
+    return _envelope(request, report.model_dump(mode="json"))
+
+
+@router.post("/monitor/online-preflight")
+async def monitor_online_preflight(request: Request) -> dict[str, Any]:
+    report = await _online_preflight_runner(request)()
     return _envelope(request, report.model_dump(mode="json"))
 
 

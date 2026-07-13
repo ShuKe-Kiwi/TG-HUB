@@ -23,6 +23,7 @@ from app.modules.monitor.preflight import (
     run_static_startup_preflight,
 )
 from app.modules.monitor.runtime import failed_monitor_runtime_summary
+from app.modules.monitor.online_preflight import run_online_session_preflight
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,6 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     preflight = commands.add_parser("preflight")
     preflight.add_argument("--preflight-json", action="store_true")
+
+    online_preflight = commands.add_parser("online-preflight")
+    online_preflight.add_argument("--json", action="store_true")
 
     run = commands.add_parser("run")
     run.add_argument("--summary-json", action="store_true")
@@ -210,6 +214,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             json_output=args.preflight_json,
             stream=sys.stdout,
         )
+        return 0 if report.status == "pass" else 2
+
+    if args.command == "online-preflight":
+        try:
+            report = asyncio.run(run_online_session_preflight(app_settings))
+        except KeyboardInterrupt:
+            return 130
+        payload = report.model_dump(mode="json")
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print("TG-HUB_ONLINE_PREFLIGHT_RESULT:")
+            for key, value in payload.items():
+                print(f"- {key}: {_human_value(value)}")
         return 0 if report.status == "pass" else 2
 
     try:

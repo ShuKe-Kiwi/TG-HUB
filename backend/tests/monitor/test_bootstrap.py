@@ -72,6 +72,14 @@ class FakeRuntime:
         )
 
 
+class FakeLease:
+    def acquire(self):
+        return None
+
+    def release(self):
+        return None
+
+
 async def test_bootstrap_checks_db_and_injects_application_boundaries(tmp_path: Path) -> None:
     watchlist = tmp_path / "watchlist.json"
     watchlist.write_text(
@@ -97,6 +105,7 @@ async def test_bootstrap_checks_db_and_injects_application_boundaries(tmp_path: 
         resolver_factory=lambda settings: FakeResolver(),
         client_factory=lambda settings: object(),
         runtime_factory=FakeRuntime,
+        session_lease_factory=lambda settings: FakeLease(),
     )
 
     result = await bootstrap.run()

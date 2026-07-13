@@ -87,6 +87,8 @@ async def test_overview_page_renders_local_shell_and_csrf_meta(tmp_path: Path) -
     assert 'id="start-monitor"' in response.text
     assert 'id="preflight-dialog"' in response.text
     assert 'id="preflight-result"' in response.text
+    assert 'id="run-online-preflight"' in response.text
+    assert 'id="online-preflight-dialog"' in response.text
     assert 'id="match-list"' in response.text
     assert 'id="rotation-heading"' in response.text
     assert 'data-rotation="agent_status"' in response.text

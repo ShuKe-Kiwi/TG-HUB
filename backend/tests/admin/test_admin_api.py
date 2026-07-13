@@ -17,6 +17,7 @@ from app.modules.monitor.control import (
 )
 from app.modules.monitor.heartbeat import HeartbeatPersistenceStatus
 from app.modules.monitor.preflight import MonitorStartupPreflightReport
+from app.modules.monitor.online_preflight import OnlineSessionPreflightResult
 from app.modules.monitor.watchlist_service import WatchlistApplicationService
 
 _CSRF = "test-csrf-token"
@@ -143,6 +144,7 @@ async def _client(
     tmp_path: Path,
     *,
     rotation_status_reader=None,
+    online_preflight_runner=None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, FakeControlService, WatchlistApplicationService]]:
     path = tmp_path / "watchlist.json"
     _write_watchlist(path)
@@ -172,6 +174,7 @@ async def _client(
                 legacy_content_possible=False,
             )
         ),
+        online_preflight_runner=online_preflight_runner,
     )
     async with application.router.lifespan_context(application):
         transport = httpx.ASGITransport(app=application)
@@ -189,6 +192,43 @@ def _mutation_headers(**updates: str) -> dict[str, str]:
     }
     headers.update(updates)
     return headers
+
+
+async def test_online_preflight_is_explicit_and_returns_desensitized_result(
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    async def run_online():
+        nonlocal calls
+        calls += 1
+        return OnlineSessionPreflightResult(
+            status="fail",
+            error_code="SESSION_UNAUTHORIZED",
+            session_authorized="no",
+            channel_resolution="blocked_by_session",
+            enabled_channels=2,
+            resolved_channels=0,
+            failed_channels=0,
+            unattempted_channels=2,
+            telegram_api_accessed="yes",
+        )
+
+    async with _client(
+        tmp_path, online_preflight_runner=run_online
+    ) as (client, _, _):
+        status_response = await client.get("/api/admin/v1/monitor/status")
+        assert calls == 0
+        response = await client.post(
+            "/api/admin/v1/monitor/online-preflight",
+            headers=_mutation_headers(),
+            json={},
+        )
+
+    assert status_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["data"]["error_code"] == "SESSION_UNAUTHORIZED"
+    assert calls == 1
 
 
 async def test_status_is_versioned_desensitized_and_not_cached(tmp_path: Path) -> None:

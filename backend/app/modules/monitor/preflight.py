@@ -10,7 +10,11 @@ from typing import Callable, Literal
 from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, settings
-from app.modules.monitor.config import load_watchlist
+from app.modules.monitor.config import WatchlistConfig, load_watchlist
+from app.modules.monitor.session_ownership import (
+    SessionOwnershipError,
+    validate_session_file,
+)
 from app.modules.monitor.source_channels import precheck_source_channels
 
 Status = Literal["pass", "fail"]
@@ -31,6 +35,9 @@ class MonitorStartupPreflightReport(BaseModel):
     session_configured: Status
     session_parent_exists: Status
     session_parent_writable: Status
+    session_file_exists: Status = "pass"
+    session_file_regular: Status = "pass"
+    session_file_permissions: Status = "pass"
     database_url_configured: Status
     enabled_source_channels: int
     invalid_source_channels: int
@@ -60,7 +67,10 @@ class StaticStartupPreflight:
             lambda path: os.access(path, os.W_OK)
         )
 
-    def run(self) -> MonitorStartupPreflightReport:
+    def run(
+        self,
+        watchlist_snapshot: WatchlistConfig | None = None,
+    ) -> MonitorStartupPreflightReport:
         blockers: list[str] = []
         enabled_sources = 0
         invalid_sources = 0
@@ -69,7 +79,9 @@ class StaticStartupPreflight:
         watchlist_valid = False
 
         try:
-            watchlist = load_watchlist(self.settings.WATCHLIST_PATH)
+            watchlist = watchlist_snapshot or load_watchlist(
+                self.settings.WATCHLIST_PATH
+            )
             watchlist_loaded = True
             watchlist_valid = True
             source_results = precheck_source_channels(watchlist)
@@ -95,6 +107,12 @@ class StaticStartupPreflight:
             self._writable_probe(session_parent) if parent_exists else False
         )
         database_ready = bool(self.settings.DATABASE_URL.strip())
+        session_file_ready = False
+        try:
+            validate_session_file(self.settings)
+            session_file_ready = True
+        except SessionOwnershipError:
+            pass
 
         checks = (
             (telethon_ready, "telethon_dependency_missing"),
@@ -103,6 +121,7 @@ class StaticStartupPreflight:
             (session_ready, "telegram_session_name_missing"),
             (parent_exists, "telegram_session_parent_missing"),
             (parent_writable, "telegram_session_parent_not_writable"),
+            (session_file_ready, "telegram_session_file_invalid"),
             (database_ready, "database_url_missing"),
             (enabled_sources > 0, "no_enabled_source_channels"),
             (invalid_sources == 0, "invalid_source_channels"),
@@ -122,6 +141,9 @@ class StaticStartupPreflight:
             session_configured="pass" if session_ready else "fail",
             session_parent_exists="pass" if parent_exists else "fail",
             session_parent_writable="pass" if parent_writable else "fail",
+            session_file_exists="pass" if session_file_ready else "fail",
+            session_file_regular="pass" if session_file_ready else "fail",
+            session_file_permissions="pass" if session_file_ready else "fail",
             database_url_configured="pass" if database_ready else "fail",
             enabled_source_channels=enabled_sources,
             invalid_source_channels=invalid_sources,
@@ -134,3 +156,11 @@ def run_static_startup_preflight(
     app_settings: Settings | None = None,
 ) -> MonitorStartupPreflightReport:
     return StaticStartupPreflight(app_settings).run()
+
+
+def build_static_startup_preflight(
+    watchlist_snapshot: WatchlistConfig,
+    app_settings: Settings | None = None,
+) -> MonitorStartupPreflightReport:
+    """Build static checks from the same frozen watchlist used online."""
+    return StaticStartupPreflight(app_settings).run(watchlist_snapshot)

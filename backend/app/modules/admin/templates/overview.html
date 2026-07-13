@@ -32,6 +32,9 @@
       <button id="run-preflight" class="button secondary" disabled>
         <span aria-hidden="true">✓</span><span>运行预检</span>
       </button>
+      <button id="run-online-preflight" class="button secondary" disabled>
+        在线预检
+      </button>
       <button id="refresh-status" class="icon-button bordered" title="刷新状态" aria-label="刷新状态">↻</button>
     </div>
     <p id="restart-notice" class="inline-notice warning hidden">监听配置已变化，当前进程仍使用启动时快照。停止后重新启动即可生效。</p>
@@ -133,5 +136,15 @@
   <div id="preflight-result" class="preflight-result" role="status" aria-live="polite"></div>
   <div id="preflight-content" class="report-list"></div>
   <div class="dialog-actions"><button class="button secondary" data-close-dialog="preflight-dialog">关闭</button></div>
+</dialog>
+
+<dialog id="online-preflight-dialog" class="dialog report-dialog">
+  <div class="dialog-header">
+    <div><p class="eyebrow">ONLINE PREFLIGHT</p><h2>Telegram 在线预检</h2></div>
+    <button class="icon-button" data-close-dialog="online-preflight-dialog" aria-label="关闭" title="关闭">×</button>
+  </div>
+  <div id="online-preflight-result" class="preflight-result" role="status" aria-live="polite"></div>
+  <div id="online-preflight-content" class="report-list"></div>
+  <div class="dialog-actions"><button class="button secondary" data-close-dialog="online-preflight-dialog">关闭</button></div>
 </dialog>
 {% endblock %}

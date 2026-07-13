@@ -20,6 +20,8 @@ def _write_watchlist(path: Path) -> None:
 def test_static_preflight_passes_without_external_access(tmp_path: Path) -> None:
     watchlist_path = tmp_path / "watchlist.json"
     _write_watchlist(watchlist_path)
+    (tmp_path / "session.session").write_bytes(b"")
+    (tmp_path / "session.session").chmod(0o600)
     configured = Settings(
         WATCHLIST_PATH=watchlist_path,
         TELEGRAM_API_ID=123,

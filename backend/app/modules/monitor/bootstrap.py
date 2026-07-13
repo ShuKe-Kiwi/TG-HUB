@@ -34,6 +34,10 @@ from app.modules.monitor.listener_dry_run import (
 from app.modules.monitor.telethon_resolver import (
     TelethonControlledChannelResolver,
 )
+from app.modules.monitor.session_ownership import (
+    SessionOwnershipError,
+    SessionOwnershipLease,
+)
 from app.modules.resource.query_service import ResourceQueryService
 
 BotNotificationStatus = Literal[
@@ -90,6 +94,9 @@ class MonitorBootstrap:
         resolver_factory: Callable[[Settings], Any] | None = None,
         client_factory: Callable[[Settings], Any] = create_telethon_client_from_settings,
         runtime_factory: Callable[..., MonitorRuntime] = MonitorRuntime,
+        session_lease_factory: Callable[[Settings], Any] = (
+            SessionOwnershipLease.from_settings
+        ),
     ) -> None:
         self.settings = app_settings or settings
         self.heartbeat_sink = heartbeat_sink or NullHeartbeatSink()
@@ -104,6 +111,7 @@ class MonitorBootstrap:
         )
         self.client_factory = client_factory
         self.runtime_factory = runtime_factory
+        self.session_lease_factory = session_lease_factory
         self.runtime: MonitorRuntime | None = None
         self._http_client: httpx.AsyncClient | None = None
         self._stop_requested = False
@@ -134,44 +142,64 @@ class MonitorBootstrap:
         bot_status = await self._configure_notifications(event_bus)
 
         watchlist = load_watchlist(self.settings.WATCHLIST_PATH)
-        resolver = self.resolver_factory(self.settings)
-        async with resolver:
-            resolution = await resolve_source_channels(watchlist, resolver)
-        channel_ids = tuple(
-            item.numeric_channel_id
-            for item in resolution.results
-            if item.status in {"resolved", "already_numeric"}
-            and item.numeric_channel_id is not None
-        )
-        if resolution.blockers:
+        lease = self.session_lease_factory(self.settings)
+        try:
+            lease.acquire()
+        except SessionOwnershipError as exc:
             return self._result(
                 failed_monitor_runtime_summary(
-                    "CHANNEL_RESOLUTION_FAILED",
-                    enabled_source_channels=resolution.enabled_source_channels,
+                    "SESSION_IN_USE"
+                    if exc.error_code == "SESSION_IN_USE"
+                    else "SESSION_UNAVAILABLE",
+                    enabled_source_channels=len(
+                        watchlist.enabled_source_refs()
+                    ),
                 ),
                 database_ready=True,
                 bot_status=bot_status,
-                blockers=list(resolution.blockers),
+                blockers=[exc.error_code.casefold()],
             )
+        try:
+            resolver = self.resolver_factory(self.settings)
+            async with resolver:
+                resolution = await resolve_source_channels(watchlist, resolver)
+            channel_ids = tuple(
+                item.numeric_channel_id
+                for item in resolution.results
+                if item.status in {"resolved", "already_numeric"}
+                and item.numeric_channel_id is not None
+            )
+            if resolution.blockers:
+                return self._result(
+                    failed_monitor_runtime_summary(
+                        "CHANNEL_RESOLUTION_FAILED",
+                        enabled_source_channels=resolution.enabled_source_channels,
+                    ),
+                    database_ready=True,
+                    bot_status=bot_status,
+                    blockers=list(resolution.blockers),
+                )
 
-        self.runtime = self.runtime_factory(
-            watchlist=watchlist,
-            client=self.client_factory(self.settings),
-            resolved_channel_ids=channel_ids,
-            config=MonitorRuntimeConfig.from_settings(self.settings),
-            heartbeat_sink=self.heartbeat_sink,
-            ingestion_boundary=ingestion,
-            processing_boundary=processing,
-        )
-        if self._stop_requested:
-            self.runtime.stop()
-        summary = await self.runtime.run()
-        return self._result(
-            summary,
-            database_ready=True,
-            bot_status=bot_status,
-            blockers=[],
-        )
+            self.runtime = self.runtime_factory(
+                watchlist=watchlist,
+                client=self.client_factory(self.settings),
+                resolved_channel_ids=channel_ids,
+                config=MonitorRuntimeConfig.from_settings(self.settings),
+                heartbeat_sink=self.heartbeat_sink,
+                ingestion_boundary=ingestion,
+                processing_boundary=processing,
+            )
+            if self._stop_requested:
+                self.runtime.stop()
+            summary = await self.runtime.run()
+            return self._result(
+                summary,
+                database_ready=True,
+                bot_status=bot_status,
+                blockers=[],
+            )
+        finally:
+            lease.release()
 
     async def aclose(self) -> None:
         if self._http_client is not None:
