@@ -57,6 +57,7 @@
 - `P6-Deploy-3A` 已完成真实安装验收：LaunchAgent 使用新日志路径，文件权限为 `0600`，迁移后新增日志全部为单行 JSON。
 - `P6-Deploy-3B` 已完成真实 LaunchAgent 运行验收：Monitor 启动后 heartbeat 持续写入且逐行可解析，active/lock 权限均为 `0600`，无长期文件句柄；优雅停止后 persistence 状态为 `closed`，跨完整 heartbeat 周期文件不再增长，应用 health/readiness 保持正常。
 - `P6-Deploy-3C` 已完成一次性轮转引擎实现：固定目标解析、rotate/heartbeat flock、dry-run、generation age、应用日志 copy-truncate 两阶段恢复、heartbeat 原子切换、durable pending、gzip 原子提交、retention、250 MiB archive budget 与脱敏 rotation status 均已通过专项测试；尚未安装 rotation LaunchAgent，也未对真实日志执行轮转。
+- `P6-Deploy-3D-1` 已完成 rotation LaunchAgent 安装生命周期实现：固定按小时调度 plist、只读 dry-run、严格 bootstrap 回滚、幂等卸载和 Python status wrapper 已通过测试；rotation agent 尚未真实安装或 kickstart，未执行真实轮转，3D-2/3/4 尚未进入。
 - 当前外部 `watchlist.json` 已由运营修改，两个旧 P6-2B 外部 fixture 测试可能因样本期待标题与运行时 watchlist 不一致而失败；这不代表 Parser/Monitor 回归失败，后续应让离线 fixture 使用独立固定 watchlist。
 
 ---
@@ -123,7 +124,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已进入 `P6-Deploy`，下一步为 P6-Deploy-3C 代码审查与提交；之后再评审 P6-Deploy-3D。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已进入 `P6-Deploy-3D`，3D-1 已实现但尚未真实安装。下一步应先审查并提交 3D-1，再单独评审 3D-2 rotation status 只读投影；不得直接进入 online session preflight 或真实轮转。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 

@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+import subprocess
 
 
 DEPLOY = Path(__file__).parents[2] / "deploy"
@@ -48,3 +50,88 @@ def test_runtime_uses_server_module_without_uvicorn_log_reconfiguration() -> Non
     assert '"-m", "app.deploy.server"' in runtime
     assert "log_config=None" in server
     assert "access_log=False" in server
+
+
+def test_rotation_launchd_template_has_locked_schedule_contract() -> None:
+    content = (DEPLOY / "com.tghub.rotate-logs.plist.template").read_text(
+        encoding="utf-8"
+    )
+    assert "com.tghub.rotate-logs" in content
+    assert "__PYTHON__" in content
+    assert "<string>-m</string>" in content
+    assert "<string>app.deploy.rotate_logs</string>" in content
+    assert "<key>WorkingDirectory</key><string>__BACKEND_DIR__</string>" in content
+    assert "<key>RunAtLoad</key><false/>" in content
+    assert "<key>StartInterval</key><integer>3600</integer>" in content
+    assert "<key>ProcessType</key><string>Background</string>" in content
+    assert "<key>KeepAlive</key>" not in content
+    assert content.count("<string>/dev/null</string>") == 2
+    for secret in ("TELEGRAM_API_HASH", "TELEGRAM_BOT_TOKEN", "DATABASE_URL"):
+        assert secret not in content
+
+
+def test_rotation_lifecycle_scripts_keep_3d1_boundary() -> None:
+    install = (DEPLOY / "install_rotation.sh").read_text(encoding="utf-8")
+    uninstall = (DEPLOY / "uninstall_rotation.sh").read_text(encoding="utf-8")
+    status = (DEPLOY / "rotation_status.sh").read_text(encoding="utf-8")
+
+    assert "launchctl bootstrap" in install
+    assert "ROTATION_AGENT_ALREADY_INSTALLED" in install
+    assert "ROTATION_AGENT_ROLLBACK_FAILED" in install
+    assert "launchctl bootout" in install
+    assert "launchctl bootout" in uninstall
+    assert "app.deploy.rotation_status" in status
+    assert 'exec "$BACKEND/.venv/bin/python"' in status
+
+    combined = install + uninstall + status
+    assert "launchctl kickstart" not in combined
+    assert "--dry-run" not in status
+    assert "app.deploy.rotate_logs --" not in combined
+    assert "TELEGRAM_API_ID" not in combined
+    assert "TELEGRAM_API_HASH" not in combined
+    assert "jq " not in status
+    assert "grep " not in status
+
+
+def test_rotation_install_dry_run_does_not_create_user_files(tmp_path: Path) -> None:
+    env_file = tmp_path / "production.env"
+    env_file.write_text("APP_ENV=production\n", encoding="utf-8")
+    env = os.environ.copy()
+    env.update(HOME=str(tmp_path), TG_HUB_ENV_FILE=str(env_file))
+
+    result = subprocess.run(
+        [DEPLOY / "install_rotation.sh", "--dry-run"],
+        cwd=DEPLOY.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert '"dry_run":true' in result.stdout
+    assert not (tmp_path / "Library").exists()
+
+
+def test_rotation_install_never_overwrites_existing_plist(tmp_path: Path) -> None:
+    env_file = tmp_path / "production.env"
+    env_file.write_text("APP_ENV=production\n", encoding="utf-8")
+    agents = tmp_path / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    plist = agents / "com.tghub.rotate-logs.plist"
+    plist.write_text("owned-before-install", encoding="utf-8")
+    env = os.environ.copy()
+    env.update(HOME=str(tmp_path), TG_HUB_ENV_FILE=str(env_file))
+
+    result = subprocess.run(
+        [DEPLOY / "install_rotation.sh"],
+        cwd=DEPLOY.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 10
+    assert "ROTATION_AGENT_ALREADY_INSTALLED" in result.stdout
+    assert plist.read_text(encoding="utf-8") == "owned-before-install"

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.tghub.rotate-logs</string>
+  <key>ProgramArguments</key><array>
+    <string>__PYTHON__</string>
+    <string>-m</string>
+    <string>app.deploy.rotate_logs</string>
+  </array>
+  <key>WorkingDirectory</key><string>__BACKEND_DIR__</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>TG_HUB_ENV_FILE</key><string>__ENV_FILE__</string>
+  </dict>
+  <key>RunAtLoad</key><false/>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
+</dict></plist>
