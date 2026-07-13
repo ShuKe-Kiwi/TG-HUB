@@ -248,7 +248,8 @@ async def test_publish_failure_does_not_rollback_committed_data(
     )
 
     assert result.dedup_status == "new"
-    assert "simulated publish failure" in caplog.text
+    assert "event_bus.publish_failed" in caplog.text
+    assert "simulated publish failure" not in caplog.text
 
     async with AsyncSession(bind=db_session.bind) as observer:
         persisted_message = await observer.get(RawMessage, message.id)

@@ -56,9 +56,7 @@ class InMemoryEventBus(EventBus):
             try:
                 await handler(event)
             except Exception:
-                handler_name = getattr(handler, "__qualname__", repr(handler))
-                logger.exception(
-                    "Domain event handler %s failed for %s",
-                    handler_name,
-                    type(event).__name__,
+                logger.error(
+                    "event_bus.handler_failed",
+                    extra={"error_code": "EVENT_HANDLER_FAILED", "recoverable": True},
                 )

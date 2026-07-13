@@ -67,12 +67,7 @@ class RawMessageService:
             data.channel_id, data.tg_message_id
         )
         if existing is not None:
-            logger.info(
-                "RawMessage channel_id=%s tg_message_id=%s already exists (id=%s), returning existing",
-                data.channel_id,
-                data.tg_message_id,
-                existing.id,
-            )
+            logger.info("raw_message.duplicate")
             return RawMessageIngestResult(
                 raw_message=existing,
                 disposition="duplicate",
@@ -104,22 +99,12 @@ class RawMessageService:
             )
             if existing is None:
                 raise
-            logger.info(
-                "RawMessage channel_id=%s tg_message_id=%s concurrently inserted (id=%s), returning duplicate",
-                data.channel_id,
-                data.tg_message_id,
-                existing.id,
-            )
+            logger.info("raw_message.concurrent_duplicate")
             return RawMessageIngestResult(
                 raw_message=existing,
                 disposition="duplicate",
             )
-        logger.info(
-            "Ingested RawMessage id=%s channel_id=%s tg_message_id=%s",
-            raw_message.id,
-            raw_message.channel_id,
-            raw_message.tg_message_id,
-        )
+        logger.info("raw_message.stored")
         return RawMessageIngestResult(
             raw_message=raw_message,
             disposition="stored",
@@ -166,9 +151,9 @@ class RawMessageService:
             raw_message.parsed_data = None
             raw_message.parse_status = "parse_failed"
             raw_message.last_parse_error = f"{type(exc).__name__}: {exc}"
-            logger.exception(
-                "ParserPipeline failed for RawMessage id=%s",
-                raw_message.id,
+            logger.error(
+                "parser.pipeline_failed",
+                extra={"error_code": "PARSER_PIPELINE_FAILED", "recoverable": True},
             )
 
         raw_message.last_parsed_at = datetime.now(timezone.utc)
@@ -230,8 +215,9 @@ class RawMessageService:
             assert raw_message is not None  # confirmed to exist above
             raw_message.dedup_status = "dedup_pending"
             await self.session.commit()
-            logger.exception(
-                "DedupService failed for RawMessage id=%s", raw_msg_id,
+            logger.error(
+                "dedup.persist_failed",
+                extra={"error_code": "DEDUP_PERSIST_FAILED", "recoverable": True},
             )
         else:
             if event_bus is not None:
@@ -258,10 +244,9 @@ class RawMessageService:
                         try:
                             await event_bus.publish(event)
                         except Exception:
-                            logger.exception(
-                                "EventBus failed to publish %s for RawMessage id=%s",
-                                type(event).__name__,
-                                raw_msg_id,
+                            logger.error(
+                                "event_bus.publish_failed",
+                                extra={"error_code": "EVENT_PUBLISH_FAILED", "recoverable": True},
                             )
 
         await self.session.refresh(raw_message)

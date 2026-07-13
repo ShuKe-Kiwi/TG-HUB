@@ -155,8 +155,8 @@ def create_app(
             telegram_enabled = True
         except (TelegramConfigurationError, ValueError):
             logger.warning(
-                "Telegram integration disabled due to missing or invalid "
-                "configuration"
+                "telegram.integration_disabled",
+                extra={"error_code": "TELEGRAM_CONFIG_INVALID"},
             )
             if owned_http_client is not None:
                 await owned_http_client.aclose()
@@ -246,9 +246,11 @@ def create_app(
             if not is_admin:
                 raise
             logger.error(
-                "Admin API request failed request_id=%s "
-                "error_code=ADMIN_INTERNAL_ERROR",
-                request.state.admin_request_id,
+                "admin.request_failed",
+                extra={
+                    "error_code": "ADMIN_INTERNAL_ERROR",
+                    "request_id": request.state.admin_request_id,
+                },
             )
             response = await admin_error_handler(
                 request,

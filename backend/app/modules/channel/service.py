@@ -19,11 +19,7 @@ class ChannelService:
         """Idempotent create: if tg_id exists, return existing without modification."""
         existing = await self.repo.get_by_tg_id(data.tg_id)
         if existing is not None:
-            logger.info(
-                "Channel tg_id=%s already exists (id=%s), returning existing",
-                data.tg_id,
-                existing.id,
-            )
+            logger.info("channel.duplicate")
             return existing
 
         channel = Channel(
@@ -37,7 +33,7 @@ class ChannelService:
         )
         await self.repo.create(channel)
         await self.session.commit()
-        logger.info("Created channel id=%s tg_id=%s name=%s", channel.id, channel.tg_id, channel.name)
+        logger.info("channel.created")
         return channel
 
     async def get_by_id(self, channel_id: int) -> Channel | None:

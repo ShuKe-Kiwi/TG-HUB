@@ -621,7 +621,8 @@ async def test_notify_missing_resource_logs_and_sends_nothing(
 
     assert query_service.calls == [("detail", 404)]
     assert transport.messages == []
-    assert "resource_id=404" in caplog.text
+    assert "notification.resource_missing" in caplog.text
+    assert "resource_id=404" not in caplog.text
 
 
 @pytest.mark.asyncio

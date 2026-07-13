@@ -50,9 +50,8 @@ class BotCommandHandler:
                 )
         except Exception:
             logger.error(
-                "Bot query failed command=%s chat_id=%s",
-                command,
-                update.chat_id,
+                "bot.query_failed",
+                extra={"error_code": "BOT_QUERY_FAILED", "recoverable": True},
             )
             await self._send(
                 update.chat_id,
@@ -130,7 +129,10 @@ class BotCommandHandler:
                 parse_mode="HTML",
             )
         except Exception:
-            logger.error("Bot transport failed chat_id=%s", chat_id)
+            logger.error(
+                "bot.transport_failed",
+                extra={"error_code": "BOT_TRANSPORT_FAILED", "recoverable": True},
+            )
 
 
 class ResourceNotifyHandler:
@@ -175,15 +177,12 @@ class ResourceNotifyHandler:
             detail = await self._query_service.get_detail(resource_id)
         except Exception:
             logger.error(
-                "Resource notification query failed resource_id=%s",
-                resource_id,
+                "notification.query_failed",
+                extra={"error_code": "NOTIFICATION_QUERY_FAILED", "recoverable": True},
             )
             return
         if detail is None:
-            logger.warning(
-                "Resource notification skipped missing resource_id=%s",
-                resource_id,
-            )
+            logger.warning("notification.resource_missing")
             return
 
         if merged:
@@ -208,8 +207,6 @@ class ResourceNotifyHandler:
                 )
             except Exception:
                 logger.error(
-                    "Resource notification transport failed chat_id=%s "
-                    "resource_id=%s",
-                    chat_id,
-                    resource_id,
+                    "notification.transport_failed",
+                    extra={"error_code": "NOTIFICATION_TRANSPORT_FAILED", "recoverable": True},
                 )

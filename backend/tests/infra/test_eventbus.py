@@ -101,7 +101,8 @@ async def test_failing_handler_does_not_block_later_handler(
     await event_bus.publish(_resource_created())
 
     assert calls == ["failing", "later"]
-    assert "consumer failed" in caplog.text
+    assert "event_bus.handler_failed" in caplog.text
+    assert "consumer failed" not in caplog.text
 
 
 @pytest.mark.asyncio

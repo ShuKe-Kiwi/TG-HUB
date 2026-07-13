@@ -11,6 +11,10 @@ def test_launchd_template_has_locked_lifecycle_contract() -> None:
     assert "<key>SuccessfulExit</key><false/>" in content
     assert "<key>ThrottleInterval</key><integer>10</integer>" in content
     assert "TG_HUB_ENV_FILE" in content
+    assert "__LOG_DIR__/app.stdout.log" in content
+    assert "__LOG_DIR__/app.stderr.log" in content
+    assert "__LOG_DIR__/app.log" not in content
+    assert "__LOG_DIR__/app.error.log" not in content
     for secret in ("TELEGRAM_API_HASH", "TELEGRAM_BOT_TOKEN", "DATABASE_URL"):
         assert secret not in content
 
