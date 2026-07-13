@@ -78,8 +78,11 @@ def test_rotation_lifecycle_scripts_keep_3d1_boundary() -> None:
     assert "launchctl bootstrap" in install
     assert "ROTATION_AGENT_ALREADY_INSTALLED" in install
     assert "ROTATION_AGENT_ROLLBACK_FAILED" in install
+    assert "ROTATION_AGENT_METADATA_WRITE_FAILED" in install
+    assert "app.deploy.rotation_agent record-install" in install
     assert "launchctl bootout" in install
     assert "launchctl bootout" in uninstall
+    assert "app.deploy.rotation_agent remove-install" in uninstall
     assert "app.deploy.rotation_status" in status
     assert 'exec "$BACKEND/.venv/bin/python"' in status
 

@@ -81,4 +81,14 @@ if ! launchctl print "$DOMAIN" >/dev/null 2>&1; then
   fail "ROTATION_AGENT_ROLLBACK_FAILED" 16
 fi
 
+if ! (
+  cd "$BACKEND"
+  TG_HUB_ENV_FILE="$ENV_FILE" "$PYTHON" -m app.deploy.rotation_agent record-install
+) >/dev/null 2>&1; then
+  if rollback; then
+    fail "ROTATION_AGENT_METADATA_WRITE_FAILED" 17
+  fi
+  fail "ROTATION_AGENT_ROLLBACK_FAILED" 16
+fi
+
 printf '%s\n' '{"status":"pass","action":"install_rotation"}'
