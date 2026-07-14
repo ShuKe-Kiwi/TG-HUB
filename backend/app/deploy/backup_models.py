@@ -39,6 +39,9 @@ BACKUP_ERROR_CODES = frozenset(
         "BACKUP_TOOL_MISSING",
         "PG_DUMP_VERSION_UNSUPPORTED",
         "DATABASE_UNAVAILABLE",
+        "DATABASE_URL_UNSUPPORTED",
+        "DATABASE_SNAPSHOT_EXPORT_FAILED",
+        "DATABASE_SCHEMA_CHANGED_DURING_BACKUP",
         "MIGRATION_NOT_AT_HEAD",
         "GIT_WORKTREE_DIRTY",
         "WATCHLIST_UNREADABLE",
@@ -50,6 +53,9 @@ BACKUP_ERROR_CODES = frozenset(
         "BACKUP_COMMIT_UNCERTAIN",
         "BACKUP_CLEANUP_REQUIRED",
         "BACKUP_SUBPROCESS_CLEANUP_FAILED",
+        "BACKUP_PACKAGE_CHANGED_DURING_VERIFY",
+        "PG_TOOL_TIMEOUT",
+        "PG_TOOL_OUTPUT_LIMIT_EXCEEDED",
         "RESTORE_TARGET_UNSAFE",
         "RESTORE_TARGET_IDENTITY_UNCOMMITTED",
         "RESTORE_RECOVERY_RECORD_WRITE_FAILED",
@@ -71,6 +77,38 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class PgConnectionSpec(ContractModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    user: str = Field(min_length=1, max_length=255)
+    database: str = Field(min_length=1, max_length=255)
+    password: str | None = None
+
+
+class BackupPreflightResult(ContractModel):
+    status: Literal["pass", "fail"]
+    config_valid: Literal["yes", "no"]
+    paths_valid: Literal["yes", "no"]
+    git_clean: Literal["yes", "no"]
+    dependency_lock_valid: Literal["yes", "no"]
+    error_code: str | None = None
+    report_desensitized: Literal["yes"] = "yes"
+
+
+class BackupValidationResult(ContractModel):
+    status: Literal["pass", "fail"]
+    backup_id: str | None
+    manifest_valid: Literal["yes", "no"]
+    database_dump_valid: Literal["yes", "no"]
+    watchlist_snapshot_valid: Literal["yes", "no"]
+    required_catalog_objects_present: Literal["yes", "no"]
+    error_code: str | None = None
+    report_desensitized: Literal["yes"] = "yes"
+
+    @field_validator("backup_id")
+    @classmethod
+    def validate_result_backup_id(cls, value: str | None) -> str | None:
+        return validate_backup_id(value) if value is not None else None
 class DatabaseBackupManifest(ContractModel):
     format: Literal["postgresql_custom"] = "postgresql_custom"
     filename: Literal["database.dump"] = "database.dump"

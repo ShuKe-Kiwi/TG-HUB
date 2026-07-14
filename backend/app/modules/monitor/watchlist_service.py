@@ -350,6 +350,11 @@ def _revision(config: WatchlistConfig) -> str:
     return hashlib.sha256(_canonical_bytes(config)).hexdigest()
 
 
+def watchlist_revision(config: WatchlistConfig) -> str:
+    """Return the canonical revision shared by runtime and backup snapshots."""
+    return _revision(config)
+
+
 def _normalized_name(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value.strip()).casefold()
     return " ".join(normalized.split())
