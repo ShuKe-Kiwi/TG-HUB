@@ -46,7 +46,7 @@
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
 | P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
-| P6-Deploy-4 | 备份与恢复 | ⏳ 未开始 | - |
+| P6-Deploy-4 | 备份与恢复 | 🚧 4A 完成；4B 未授权 | 34 项 4A；572 全量通过 |
 | P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
 
 ---
@@ -70,7 +70,7 @@
 - Telethon `disconnect()` 返回 Future 的真实环境兼容问题已修复，完整回归为 `533 passed`。
 - `P6-Arch-Fix-1` 已完成：真实 Telethon adapter 生成版本化受控 payload 和媒体引用，ingestion 原样保存；RawMessage 到 Channel 的外键已改为 `ON DELETE RESTRICT`，完整迁移链和 `537` 项回归通过。
 - `P6-Deploy-3D-4` 已完成归档：真实轮转、Session 锁竞争和完整在线预检均通过；`StartInterval=3600` 后续自然周期属于非阻塞运维观察。
-- `P6-Deploy-4` 备份/恢复和 `P6-Deploy-5` 最终交付尚未开始；下一步只允许进入 Deploy-4 设计，不直接授权实现。
+- `P6-Deploy-4A` 已完成：manifest、内部/外部提交结果、backup root shared/exclusive lock、PostgreSQL 同 major 矩阵、restore identity/recovery phase 与稳定错误码契约均已实现，34 项专项和 572 项全量测试通过。4B-4D、真实备份、隔离恢复及生产恢复仍未授权。`P6-Deploy-5` 尚未开始。
 
 ---
 
@@ -136,7 +136,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已完成 `P6-Deploy-3D-4` 真实轮转与 E1/E2 验收并归档。下一步只进入 `P6-Deploy-4` 备份与恢复设计；Deploy-4 实现和 Deploy-5 仍需分别评审授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已完成 `P6-Deploy-4A` 契约与单元测试实现。下一步只能评审是否进入 4B production backup creation；4B-4D、真实备份、隔离恢复、生产恢复及 Deploy-5 仍需分别授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 
