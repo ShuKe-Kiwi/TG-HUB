@@ -2,8 +2,8 @@
 
 > 项目：tg-hub
 > 阶段：P6-Deploy-3D-4
-> 状态：design-locked
-> ALLOW_REAL_ACTIONS：no
+> 状态：acceptance-complete
+> ALLOW_REAL_ACTIONS：completed
 > 前置：P6-Deploy-3D-1/2/3 已实现并分别提交
 
 ## 1. 阶段目标
@@ -322,21 +322,72 @@ P6-DEPLOY-3D-4_RESULT:
 
 若 Gate D 只执行 direct CLI 而未验证 LaunchAgent kickstart、当前日志没有自然达到轮转条件，或只有 E1 `SESSION_IN_USE` 而 E2 未执行，3D-4 只能标记 `partial`，且 `recommend_allow_P6_Deploy_4=no`。不得为了完成阶段伪造轮转条件或主动停止 Monitor。
 
-## 7. 当前评审结论
+## 7. 归档验收结果
+
+完成日期：2026-07-14
+
+```text
+P6-DEPLOY-3D-4_RESULT:
+- baseline_status: pass
+- full_regression: pass (538 passed)
+- rotation_install_dry_run: pass
+- plist_lint: pass
+- secrets_exposed: no
+- main_service_before: healthy
+- rotation_agent_installed: yes
+- rotation_agent_visible: yes
+- install_metadata: valid
+- rotation_kickstarted: yes
+- rotation_trigger: launchagent_kickstart
+- launchagent_kickstart_verified: yes
+- natural_interval_execution_observed: not_required
+- rotation_execution: rotated
+- rotated_files: 2
+- archive_valid: yes
+- pending_recovery_required: no
+- rotation_status_valid: yes
+- rotation_status: pass
+- rotation_status_stale: no
+- archive_budget_status: within_budget
+- session_ownership_acceptance: pass
+- full_online_preflight: pass
+- session_authorized: yes
+- enabled_channels: 12
+- resolved_channels: 12
+- failed_channels: 0
+- unattempted_channels: 0
+- telegram_api_accessed: yes
+- database_modified: no
+- watchlist_modified: no
+- monitor_stopped_by_acceptance: no
+- recommend_allow_P6_Deploy_4_design: yes
+- blockers: none
+```
+
+真实轮转由已授权的 production LaunchAgent kickstart 执行，触发条件来自自然
+generation age，未修改阈值、generation metadata 或注入伪造日志。执行生成 2 个
+gzip archive，完整性校验通过；active 文件完成 copy-truncate，heartbeat writer
+继续写入；未发现 `.pending` 或 `.pending.meta` 残留。
+
+rotation agent 在受控重装与初始化后状态为 `runs=1`、`last exit code=0`，且不再
+显示 `needs LWCR update`。后续 `StartInterval=3600` 的自然周期执行属于运维观察，
+按本设计 Gate D 契约，第一版无需等待完整一小时，因此不构成阶段阻塞项。
+
+## 8. 最终结论
 
 ```text
 P6-DEPLOY-3D-4_REVIEW:
-  result: approved
+  result: acceptance_complete
   architecture_direction: approved
   blockers: 0
   required_clarifications: 0
-  allow_read_only_baseline: yes
-  allow_rotation_agent_install: no
-  allow_rotation_kickstart: no
-  allow_real_rotation: no
-  allow_real_telegram_access: no
-  allow_P6_Deploy_4: no
+  rotation_acceptance: pass
+  session_ownership_acceptance: pass
+  online_preflight_acceptance: pass
+  allow_P6_Deploy_4_design: yes
+  allow_P6_Deploy_4_implementation: no
   allow_P6_Deploy_5: no
 ```
 
-上一轮 Gate C TOCTOU blocker 已按方案 B 收口：Gate C 只做静态检查，任何 production kickstart 均属于 Gate D 真实动作。设计已锁定；当前仍只允许执行 Gate A 只读基线，Gate B、D、E1、E2 均未授权。
+P6-Deploy-3D-4 已完成归档。该结论只授权进入 P6-Deploy-4 备份与恢复设计，
+不直接授权实现 Deploy-4，也不授权进入 Deploy-5。

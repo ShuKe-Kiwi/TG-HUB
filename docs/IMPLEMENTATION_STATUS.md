@@ -36,7 +36,7 @@
 | P6-2K-0 | 外部平台热播数据源可行性调查与设计 | ✅ 设计锁定，延期实现 | 文档审查通过 |
 | P6-2K-1A | Trending core contracts | ⏸ 暂停（项目完成后追加） | - |
 | P6-Arch-Fix-1 | RawMessage 原始证据与不可删除约束修正 | ✅ 完成 | 537 全量通过 |
-| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 537 全量通过 |
+| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 538 全量通过 |
 | P6-Deploy-1 | health/readiness + production config contract | ✅ 完成 | 6/6 新增测试 |
 | P6-Deploy-2 | launchd + lifecycle scripts | ✅ 真实安装验收完成 | 11/11 Deploy；458 全量通过 |
 | P6-Deploy-3A | structured logging + redaction + stream split | ✅ 真实安装验收完成 | 4/4 日志专项；463 全量通过 |
@@ -45,7 +45,7 @@
 | P6-Deploy-3D-1 | rotation LaunchAgent 安装生命周期 | ✅ 实现及真实安装验收完成 | 回归通过 |
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
-| P6-Deploy-3D-4 | 真实安装与受控验收 | 🚧 partial：等待自然条件触发真实轮转 | Gate A/B/C/D、E1/E2 已通过 |
+| P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
 | P6-Deploy-4 | 备份与恢复 | ⏳ 未开始 | - |
 | P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
 
@@ -65,12 +65,12 @@
 - `P6-Deploy-3B` 已完成真实 LaunchAgent 运行验收：Monitor 启动后 heartbeat 持续写入且逐行可解析，active/lock 权限均为 `0600`，无长期文件句柄；优雅停止后 persistence 状态为 `closed`，跨完整 heartbeat 周期文件不再增长，应用 health/readiness 保持正常。
 - `P6-Deploy-3C` 轮转引擎已完成：固定目标、锁顺序、dry-run、generation age、copy-truncate 恢复、heartbeat 原子切换、gzip、retention 和 250 MiB archive budget 均已通过测试。
 - `P6-Deploy-3D-1/2` 已完成：rotation LaunchAgent 已真实安装，当前 installation generation 的状态投影、自然周期执行和受控 kickstart 均已验收。
-- Gate A/B/C 已通过：只读基线、真实安装和 dry-run 预测成立。Gate D 的 LaunchAgent kickstart 已通过且返回 `not_modified`，但日志尚未自然达到 10 MiB 或 24h 触发条件，因此尚未观察到真实 archive 产生。
+- Gate A/B/C/D 已通过：只读基线、真实安装、静态检查及 LaunchAgent kickstart 均成立；自然 generation age 条件触发真实轮转，生成 2 个 gzip archive，完整性校验通过，无 pending 残留，`rotation-status=pass`、`stale=false`。
 - `P6-Deploy-3D-3` 已完成实现和真实验收：Gate E1 在 Monitor 运行时稳定返回 `SESSION_IN_USE` 且不访问 Telegram；Gate E2 在 Monitor 停止时确认 Session 已授权，12/12 个启用频道解析成功。
 - Telethon `disconnect()` 返回 Future 的真实环境兼容问题已修复，完整回归为 `533 passed`。
 - `P6-Arch-Fix-1` 已完成：真实 Telethon adapter 生成版本化受控 payload 和媒体引用，ingestion 原样保存；RawMessage 到 Channel 的外键已改为 `ON DELETE RESTRICT`，完整迁移链和 `537` 项回归通过。
-- `P6-Deploy-3D-4` 当前仍为 `partial`：唯一未完成的真实验收是等待自然轮转条件触发，不得修改阈值或伪造 generation time。
-- `P6-Deploy-4` 备份/恢复和 `P6-Deploy-5` 最终交付尚未开始；在 3D-4 完整收口前不建议进入。
+- `P6-Deploy-3D-4` 已完成归档：真实轮转、Session 锁竞争和完整在线预检均通过；`StartInterval=3600` 后续自然周期属于非阻塞运维观察。
+- `P6-Deploy-4` 备份/恢复和 `P6-Deploy-5` 最终交付尚未开始；下一步只允许进入 Deploy-4 设计，不直接授权实现。
 
 ---
 
@@ -136,7 +136,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已完成 `P6-Deploy-3D-3` 实现与 Gate E1/E2 真实验收。下一步是在日志自然达到阈值后完成 Gate D 真实轮转观察并收口 `P6-Deploy-3D-4`，之后才进入 Deploy-4/5。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已完成 `P6-Deploy-3D-4` 真实轮转与 E1/E2 验收并归档。下一步只进入 `P6-Deploy-4` 备份与恢复设计；Deploy-4 实现和 Deploy-5 仍需分别评审授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 
