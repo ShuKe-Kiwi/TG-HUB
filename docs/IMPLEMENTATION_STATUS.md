@@ -36,7 +36,7 @@
 | P6-2K-0 | 外部平台热播数据源可行性调查与设计 | ✅ 设计锁定，延期实现 | 文档审查通过 |
 | P6-2K-1A | Trending core contracts | ⏸ 暂停（项目完成后追加） | - |
 | P6-Arch-Fix-1 | RawMessage 原始证据与不可删除约束修正 | ✅ 完成 | 537 全量通过 |
-| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 538 全量通过 |
+| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 600 全量通过 |
 | P6-Deploy-1 | health/readiness + production config contract | ✅ 完成 | 6/6 新增测试 |
 | P6-Deploy-2 | launchd + lifecycle scripts | ✅ 真实安装验收完成 | 11/11 Deploy；458 全量通过 |
 | P6-Deploy-3A | structured logging + redaction + stream split | ✅ 真实安装验收完成 | 4/4 日志专项；463 全量通过 |
@@ -46,7 +46,7 @@
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
 | P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
-| P6-Deploy-4 | 备份与恢复 | 🚧 4B 真实备份验收通过；4C 未授权 | package validator pass；588 全量通过 |
+| P6-Deploy-4 | 备份与恢复 | 🚧 4B、4C-C1 完成 | 600 全量通过；C2 未授权 |
 | P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
 
 ---
@@ -70,7 +70,7 @@
 - Telethon `disconnect()` 返回 Future 的真实环境兼容问题已修复，完整回归为 `533 passed`。
 - `P6-Arch-Fix-1` 已完成：真实 Telethon adapter 生成版本化受控 payload 和媒体引用，ingestion 原样保存；RawMessage 到 Channel 的外键已改为 `ON DELETE RESTRICT`，完整迁移链和 `537` 项回归通过。
 - `P6-Deploy-3D-4` 已完成归档：真实轮转、Session 锁竞争和完整在线预检均通过；`StartInterval=3600` 后续自然周期属于非阻塞运维观察。
-- `P6-Deploy-4B` 已完成真实生产备份验收：final package 已提交，manifest/dump/watchlist checksum、核心 catalog、私有权限及敏感材料排除均通过独立只读 validator，且无 temp 残留；备份后主服务继续 running/ready。4C-4D、隔离恢复及生产恢复仍未授权。`P6-Deploy-5` 尚未开始。
+- `P6-Deploy-4B` 已完成真实生产备份验收；`P6-Deploy-4C-C1` 已完成实现，真实临时 fixture 验证显式 `--dbname=<generated target>` + 同值 allowlist `PGDATABASE`，并完成 schema/constraint/integrity verifier、崩溃窗口收敛与 guarded DROP。专项测试 `38 passed, 3 skipped`，完整回归 `600 passed, 3 skipped`，测试隔离库无残留。C2、4D、生产恢复和 `P6-Deploy-5` 均未授权。
 
 ---
 
@@ -136,7 +136,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已完成 `P6-Deploy-4B` 真实生产备份和只读 package validation。下一步只允许进入 P6-Deploy-4C 隔离恢复验证设计/评审；在明确授权前不得创建 restore database 或执行 `pg_restore` 数据恢复。4C-4D、生产恢复及 Deploy-5 仍需分别授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已完成 `P6-Deploy-4B` 和 `P6-Deploy-4C-C1`。下一步需单独评审并授权 C2，才可使用已通过 4B validator 的真实 package 执行隔离恢复验收。4D、生产恢复及 Deploy-5 仍需分别授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 

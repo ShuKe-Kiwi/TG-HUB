@@ -233,7 +233,10 @@ def test_restore_target_rejects_unsafe_sql_identifier_input(value: str) -> None:
 
 def test_recovery_record_is_strict_and_phase_transitions_are_forward_only() -> None:
     planned = _recovery_record()
-    committed = advance_recovery_phase(planned, "identity_committed")
+    create_started = advance_recovery_phase(planned, "create_started")
+    created = advance_recovery_phase(create_started, "database_created")
+    commit_started = advance_recovery_phase(created, "identity_commit_started")
+    committed = advance_recovery_phase(commit_started, "identity_committed")
     started = advance_recovery_phase(committed, "restore_started")
     failed = advance_recovery_phase(started, "restore_failed")
 
@@ -242,6 +245,11 @@ def test_recovery_record_is_strict_and_phase_transitions_are_forward_only() -> N
         advance_recovery_phase(failed, "restore_started")
     with pytest.raises(ValidationError):
         RestoreRecoveryRecord(**{**planned.model_dump(), "host": "localhost"})
+
+    passed = advance_recovery_phase(started, "verification_passed")
+    assert advance_recovery_phase(passed, "drop_failed").phase == "drop_failed"
+    with pytest.raises(ValueError, match="invalid recovery phase transition"):
+        advance_recovery_phase(failed, "drop_failed")
 
 
 def test_recovery_record_rejects_invalid_token_target_and_backup_id() -> None:

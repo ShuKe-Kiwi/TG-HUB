@@ -64,6 +64,18 @@ class BackupPackageValidator:
         except (BackupFsError, BackupServiceError) as exc:
             return _failed(backup_id, exc.error_code)
 
+    async def validate_locked(self, backup_id: str) -> BackupValidationResult:
+        """Validate while the caller owns the backup-root shared lock."""
+        try:
+            validate_backup_id(backup_id)
+            root = self.settings.BACKUP_DIR.expanduser()
+            validate_backup_root(root)
+            return await self._validate_locked(root / backup_id, backup_id)
+        except ValueError:
+            return _failed(backup_id, "BACKUP_MANIFEST_INVALID")
+        except (BackupFsError, BackupServiceError) as exc:
+            return _failed(backup_id, exc.error_code)
+
     async def _validate_locked(
         self, package: Path, backup_id: str
     ) -> BackupValidationResult:

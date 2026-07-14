@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     HEARTBEAT_PATH: Path = Path("~/.tg-hub/runtime/heartbeat.jsonl")
     LOG_DIR: Path = Path("~/.tg-hub/logs")
     BACKUP_DIR: Path = Path("~/.tg-hub/backups")
+    RESTORE_VERIFY_TIMEOUT_SECONDS: int = 600
 
 
 def load_settings(env_file: str | Path | None = None) -> Settings:

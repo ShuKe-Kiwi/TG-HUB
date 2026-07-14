@@ -25,10 +25,15 @@ PackageState = Literal[
 ]
 RecoveryPhase = Literal[
     "planned",
+    "create_started",
+    "database_created",
+    "identity_commit_started",
     "identity_committed",
     "restore_started",
     "restore_failed",
     "verification_failed",
+    "verification_passed",
+    "drop_failed",
 ]
 
 BACKUP_ERROR_CODES = frozenset(
@@ -69,6 +74,19 @@ BACKUP_ERROR_CODES = frozenset(
         "RESTORE_INTEGRITY_FAILED",
         "RESTORE_DROP_FAILED",
         "RESTORE_SUBPROCESS_CLEANUP_FAILED",
+        "RESTORE_MAINTENANCE_UNAVAILABLE",
+        "RESTORE_TARGET_IN_USE",
+        "RESTORE_TARGET_PREPARED_XACT",
+        "RESTORE_TARGET_IDENTITY_MISMATCH",
+        "RESTORE_RECOVERY_PHASE_INVALID",
+        "RESTORE_RECOVERY_WRITE_FAILED",
+        "RESTORE_VERSION_UNSUPPORTED",
+        "RESTORE_TIMEOUT_INVALID",
+        "RESTORE_TIMEOUT",
+        "RESTORE_SCHEMA_MISMATCH",
+        "RESTORE_CONSTRAINT_MISMATCH",
+        "RESTORE_READONLY_SMOKE_FAILED",
+        "RESTORE_CLEANUP_GUARD_FAILED",
     }
 )
 
@@ -277,6 +295,89 @@ class RestoreRecoveryRecord(ContractModel):
         return value
 
 
+class RestoreVerificationResult(ContractModel):
+    status: Literal["pass", "fail"]
+    backup_id: str | None
+    target_created: Literal["yes", "no"]
+    restore_completed: Literal["yes", "no"]
+    schema_verified: Literal["yes", "no"]
+    constraints_verified: Literal["yes", "no"]
+    integrity_verified: Literal["yes", "no"]
+    target_dropped: Literal["yes", "no"]
+    cleanup_required: Literal["yes", "no"]
+    cleanup_handle: str | None = None
+    restore_timeout_seconds: int = Field(ge=1)
+    error_code: str | None = None
+    report_desensitized: Literal["yes"] = "yes"
+
+    @field_validator("backup_id")
+    @classmethod
+    def validate_result_backup_id(cls, value: str | None) -> str | None:
+        return validate_backup_id(value) if value is not None else None
+
+    @field_validator("cleanup_handle")
+    @classmethod
+    def validate_cleanup_handle(cls, value: str | None) -> str | None:
+        if value is not None and not OPAQUE_ID_PATTERN.fullmatch(value):
+            raise ValueError("invalid cleanup handle")
+        return value
+
+    @model_validator(mode="after")
+    def validate_result_mapping(self) -> RestoreVerificationResult:
+        if self.cleanup_required == "yes" and self.cleanup_handle is None:
+            raise ValueError("cleanup handle required")
+        if self.cleanup_required == "no" and self.cleanup_handle is not None:
+            raise ValueError("cleanup handle forbidden")
+        if self.status == "pass":
+            if self.backup_id is None or self.error_code is not None or any(
+                value != "yes"
+                for value in (
+                    self.target_created,
+                    self.restore_completed,
+                    self.schema_verified,
+                    self.constraints_verified,
+                    self.integrity_verified,
+                    self.target_dropped,
+                )
+            ):
+                raise ValueError("pass requires complete restore verification")
+            if self.cleanup_required != "no":
+                raise ValueError("pass cannot require cleanup")
+        elif self.error_code not in BACKUP_ERROR_CODES:
+            raise ValueError("fail requires a stable restore error code")
+        return self
+
+
+class RestoreCleanupResult(ContractModel):
+    status: Literal["pass", "fail"]
+    backup_id: str
+    cleanup_handle: str
+    target_dropped: Literal["yes", "no"]
+    record_deleted: Literal["yes", "no"]
+    error_code: str | None = None
+    report_desensitized: Literal["yes"] = "yes"
+
+    @field_validator("backup_id")
+    @classmethod
+    def validate_cleanup_backup_id(cls, value: str) -> str:
+        return validate_backup_id(value)
+
+    @field_validator("cleanup_handle")
+    @classmethod
+    def validate_cleanup_id(cls, value: str) -> str:
+        if not OPAQUE_ID_PATTERN.fullmatch(value):
+            raise ValueError("invalid cleanup handle")
+        return value
+
+    @model_validator(mode="after")
+    def validate_cleanup_mapping(self) -> RestoreCleanupResult:
+        if self.status == "pass":
+            if self.error_code is not None or self.record_deleted != "yes":
+                raise ValueError("cleanup pass requires deleted record")
+        elif self.error_code not in BACKUP_ERROR_CODES:
+            raise ValueError("cleanup fail requires stable error code")
+        return self
+
 def validate_backup_id(value: str) -> str:
     if not BACKUP_ID_PATTERN.fullmatch(value):
         raise ValueError("invalid backup id")
@@ -327,11 +428,20 @@ def advance_recovery_phase(
     record: RestoreRecoveryRecord, phase: RecoveryPhase
 ) -> RestoreRecoveryRecord:
     allowed: dict[RecoveryPhase, set[RecoveryPhase]] = {
-        "planned": {"identity_committed"},
+        "planned": {"create_started"},
+        "create_started": {"database_created"},
+        "database_created": {"identity_commit_started"},
+        "identity_commit_started": {"identity_committed"},
         "identity_committed": {"restore_started"},
-        "restore_started": {"restore_failed", "verification_failed"},
+        "restore_started": {
+            "restore_failed",
+            "verification_failed",
+            "verification_passed",
+        },
         "restore_failed": set(),
         "verification_failed": set(),
+        "verification_passed": {"drop_failed"},
+        "drop_failed": set(),
     }
     if phase not in allowed[record.phase]:
         raise ValueError("invalid recovery phase transition")
