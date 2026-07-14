@@ -2,10 +2,10 @@
 
 > 项目：tg-hub  
 > 阶段：P6-Deploy-4C  
-> 状态：C1-implementation-complete  
+> 状态：C2-real-isolated-restore-accepted
 > 前置：P6-Deploy-4B 真实备份与只读 validator 已通过  
 > ALLOW_IMPLEMENTATION：C1-only  
-> ALLOW_REAL_RESTORE_VERIFY：no  
+> ALLOW_REAL_RESTORE_VERIFY：completed
 > ALLOW_PRODUCTION_RESTORE：no  
 > ALLOW_P6_DEPLOY_4D：no
 
@@ -519,7 +519,7 @@ terminate、DROP、record delete 或 lock release。
 
 ```text
 P6-DEPLOY-4C_REVIEW:
-  result: C1_implementation_complete
+  result: C2_real_isolated_restore_accepted
   architecture_direction: aligned
   lifecycle_completeness: pass
   crash_recovery_model: pass
@@ -532,10 +532,17 @@ P6-DEPLOY-4C_REVIEW:
   C1_focused_tests: 38_passed_3_skipped
   C1_full_regression: 600_passed_3_skipped
   temporary_restore_fixture: pass
+  real_4B_package_validation: pass
+  real_isolated_restore: pass
+  real_schema_verification: pass
+  real_constraint_verification: pass
+  real_integrity_verification: pass
+  guarded_target_drop: pass
+  cleanup_required: no
   generated_database_residue: none
   allow_P6_Deploy_4C_C1: complete
-  allow_P6_Deploy_4C_C2: no
-  allow_real_restore_verify: no
+  allow_P6_Deploy_4C_C2: complete
+  allow_real_restore_verify: complete
   allow_P6_Deploy_4D: no
   allow_production_restore: no
   allow_P6_Deploy_5: no
@@ -543,5 +550,11 @@ P6-DEPLOY-4C_REVIEW:
 
 真实临时 fixture 测试依次否定“无 dbname”和“空 `--dbname=`”，最终验证显式 generated
 target + 同值 allowlist `PGDATABASE` 可完成 direct restore、schema/constraint/integrity
-验证和 guarded DROP。C1 的 fake、临时 PostgreSQL 集成测试及完整回归均已通过，未遗留
-生成的隔离数据库。C2、4D 和生产恢复继续禁止。
+验证和 guarded DROP。C1 的 fake、临时 PostgreSQL 集成测试及完整回归均已通过。
+C2 使用已通过 4B validator 的真实 package 完成隔离恢复、只读验证和 guarded DROP，
+无需 cleanup，未遗留生成的隔离数据库或 recovery record。4D 和生产恢复继续禁止。
+
+本次 C2 首次执行在创建数据库前因 `production.env` 的 `DATABASE_URL` 使用隐式系统用户
+名而返回 `DATABASE_URL_UNSUPPORTED`；随后只对验收进程使用同一 host/database 的显式
+本机角色完成验证。生产连接串随后已固定为显式用户名，主 LaunchAgent 重启后 liveness
+和 readiness 均通过，后续 backup/restore CLI 不再依赖隐式系统用户名。
