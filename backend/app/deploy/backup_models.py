@@ -59,6 +59,13 @@ BACKUP_ERROR_CODES = frozenset(
         "BACKUP_CLEANUP_REQUIRED",
         "BACKUP_SUBPROCESS_CLEANUP_FAILED",
         "BACKUP_PACKAGE_CHANGED_DURING_VERIFY",
+        "BACKUP_INVENTORY_INVALID",
+        "BACKUP_PIN_INVALID",
+        "BACKUP_PIN_ORPHANED",
+        "BACKUP_RECOVERY_HOLD_ORPHANED",
+        "BACKUP_VERIFICATION_WRITE_FAILED",
+        "BACKUP_VERIFICATION_IDENTITY_INVALID",
+        "BACKUP_VERIFICATION_ORPHANED",
         "PG_TOOL_TIMEOUT",
         "PG_TOOL_OUTPUT_LIMIT_EXCEEDED",
         "RESTORE_TARGET_UNSAFE",
@@ -127,6 +134,151 @@ class BackupValidationResult(ContractModel):
     @classmethod
     def validate_result_backup_id(cls, value: str | None) -> str | None:
         return validate_backup_id(value) if value is not None else None
+
+
+class BackupVerificationSidecar(ContractModel):
+    schema_version: Literal[1] = 1
+    backup_id: str
+    verified_at_utc: datetime
+    verification_version: Literal[1] = 1
+    manifest_sha256: str
+    database_dump_sha256: str
+    watchlist_snapshot_sha256: str
+    result: Literal["passed"] = "passed"
+
+    @field_validator("backup_id")
+    @classmethod
+    def validate_sidecar_backup_id(cls, value: str) -> str:
+        return validate_backup_id(value)
+
+    @field_validator(
+        "manifest_sha256", "database_dump_sha256", "watchlist_snapshot_sha256"
+    )
+    @classmethod
+    def validate_sidecar_sha256(cls, value: str) -> str:
+        if not SHA256_PATTERN.fullmatch(value):
+            raise ValueError("invalid sha256")
+        return value
+
+    @field_validator("verified_at_utc")
+    @classmethod
+    def validate_sidecar_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("verified_at_utc must be timezone-aware")
+        if value.utcoffset().total_seconds() != 0:
+            raise ValueError("verified_at_utc must use UTC")
+        return value
+
+
+class BackupPinSidecar(ContractModel):
+    schema_version: Literal[1] = 1
+    backup_id: str
+    pinned_at_utc: datetime
+    reason_code: Literal["pre_upgrade", "incident", "operator_hold"]
+
+    @field_validator("backup_id")
+    @classmethod
+    def validate_pin_backup_id(cls, value: str) -> str:
+        return validate_backup_id(value)
+
+    @field_validator("pinned_at_utc")
+    @classmethod
+    def validate_pin_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("pinned_at_utc must be timezone-aware")
+        if value.utcoffset().total_seconds() != 0:
+            raise ValueError("pinned_at_utc must use UTC")
+        return value
+
+
+class BackupRecoveryHoldSidecar(ContractModel):
+    schema_version: Literal[1] = 1
+    incident_id: str
+    selected_backup_id: str
+    package_identity: str
+    created_at_utc: datetime
+
+    @field_validator("incident_id")
+    @classmethod
+    def validate_incident_id(cls, value: str) -> str:
+        if not OPAQUE_ID_PATTERN.fullmatch(value):
+            raise ValueError("invalid incident id")
+        return value
+
+    @field_validator("selected_backup_id")
+    @classmethod
+    def validate_selected_backup_id(cls, value: str) -> str:
+        return validate_backup_id(value)
+
+    @field_validator("package_identity")
+    @classmethod
+    def validate_package_identity(cls, value: str) -> str:
+        if not SHA256_PATTERN.fullmatch(value):
+            raise ValueError("invalid package identity")
+        return value
+
+    @field_validator("created_at_utc")
+    @classmethod
+    def validate_hold_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("created_at_utc must be timezone-aware")
+        if value.utcoffset().total_seconds() != 0:
+            raise ValueError("created_at_utc must use UTC")
+        return value
+
+
+class BackupInventoryItem(ContractModel):
+    backup_id: str
+    created_at_utc: datetime | None
+    package_bytes: int | None = Field(default=None, ge=0)
+    manifest_status: Literal["pass", "fail"]
+    database_dump_status: Literal["pass", "fail"]
+    watchlist_snapshot_status: Literal["pass", "fail"]
+    catalog_status: Literal["pass", "fail"]
+    restore_verified: Literal["yes", "no"]
+    verification_status: Literal["missing", "valid", "invalid", "orphaned"]
+    verification_version: int | None = Field(default=None, ge=1)
+    pinned: Literal["yes", "no"]
+    pin_reason_code: Literal["pre_upgrade", "incident", "operator_hold"] | None
+    recovery_held: Literal["yes", "no"] = "no"
+    recovery_hold_status: Literal["missing", "valid", "invalid", "orphaned"] = (
+        "missing"
+    )
+    retention_slot: Literal["unassigned"] = "unassigned"
+    retention_disposition: Literal["keep", "protected", "manual_review"]
+    error_code: str | None = None
+    report_desensitized: Literal["yes"] = "yes"
+
+    @field_validator("backup_id")
+    @classmethod
+    def validate_inventory_backup_id(cls, value: str) -> str:
+        return validate_backup_id(value)
+
+
+class BackupInventoryResult(ContractModel):
+    status: Literal["pass", "fail"]
+    entries: tuple[BackupInventoryItem, ...]
+    package_count: int = Field(ge=0)
+    valid_count: int = Field(ge=0)
+    restore_verified_count: int = Field(ge=0)
+    pinned_count: int = Field(ge=0)
+    manual_review_count: int = Field(ge=0)
+    unrecognized_entry_count: int = Field(ge=0)
+    total_observed_bytes: int = Field(ge=0)
+    error_code: str | None = None
+    report_desensitized: Literal["yes"] = "yes"
+
+    @model_validator(mode="after")
+    def validate_inventory_counts(self) -> BackupInventoryResult:
+        if self.package_count != len(self.entries):
+            raise ValueError("package_count mismatch")
+        if self.status == "pass" and self.error_code is not None:
+            raise ValueError("pass cannot include an error")
+        if self.status == "fail" and self.error_code not in BACKUP_ERROR_CODES:
+            raise ValueError("fail requires a stable error code")
+        return self
+
+
 class DatabaseBackupManifest(ContractModel):
     format: Literal["postgresql_custom"] = "postgresql_custom"
     filename: Literal["database.dump"] = "database.dump"

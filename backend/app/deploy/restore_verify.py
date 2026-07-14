@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Callable
 
 from app.config import Settings, load_settings
-from app.deploy.backup_fs import BackupFsError, backup_root_lock, read_regular_exact
+from app.deploy.backup_fs import (
+    BackupFsError,
+    backup_root_lock,
+    read_regular_exact,
+    stream_sha256,
+)
 from app.deploy.backup_models import (
     BackupManifest,
     PgConnectionSpec,
@@ -31,6 +36,10 @@ from app.deploy.backup_service import (
     parse_pg_major,
 )
 from app.deploy.backup_verify import BackupPackageValidator, MAX_MANIFEST_BYTES
+from app.deploy.backup_verification import (
+    BackupVerificationError,
+    BackupVerificationStore,
+)
 from app.deploy.restore_database import (
     IDENTITY_PREFIX,
     RestoreDatabaseAdapter,
@@ -52,6 +61,7 @@ class RestoreVerificationService:
         validator: BackupPackageValidator | None = None,
         runner: PgToolRunner | None = None,
         recovery_store: RestoreRecoveryStore | None = None,
+        verification_store: BackupVerificationStore | None = None,
         adapter_factory: Callable[[str, PgConnectionSpec], RestoreDatabaseAdapter]
         | None = None,
         verifier_factory: Callable[[str], RestoreDatabaseVerifier] | None = None,
@@ -66,6 +76,9 @@ class RestoreVerificationService:
         )
         runtime_root = settings.BACKUP_DIR.expanduser().parent / "runtime"
         self.store = recovery_store or RestoreRecoveryStore(runtime_root)
+        self.verification_store = verification_store or BackupVerificationStore(
+            settings.BACKUP_DIR
+        )
         self.adapter_factory = adapter_factory or (
             lambda url, spec: RestoreDatabaseAdapter(url, spec)
         )
@@ -280,6 +293,28 @@ class RestoreVerificationService:
                 raise RestoreDatabaseError("RESTORE_DROP_FAILED")
             target_dropped = True
             self.store.delete(record.opaque_id)
+            try:
+                manifest_sha256, _ = stream_sha256(
+                    root / backup_id / "manifest.json"
+                )
+                self.verification_store.write_passed(
+                    manifest=manifest,
+                    manifest_sha256=manifest_sha256,
+                )
+            except (BackupFsError, BackupVerificationError):
+                return RestoreVerificationResult(
+                    status="fail",
+                    backup_id=backup_id,
+                    target_created="yes",
+                    restore_completed="yes",
+                    schema_verified="yes",
+                    constraints_verified="yes",
+                    integrity_verified="yes",
+                    target_dropped="yes",
+                    cleanup_required="no",
+                    restore_timeout_seconds=self.timeout,
+                    error_code="BACKUP_VERIFICATION_WRITE_FAILED",
+                )
             return RestoreVerificationResult(
                 status="pass",
                 backup_id=backup_id,

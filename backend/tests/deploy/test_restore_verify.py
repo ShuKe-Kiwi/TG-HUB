@@ -27,6 +27,7 @@ from app.deploy.restore_database import (
 )
 from app.deploy.restore_verify import RestoreVerificationService
 from app.deploy.restore_recovery import RestoreRecoveryError, RestoreRecoveryStore
+from app.deploy.backup_verification import BackupVerificationError
 
 
 BACKUP_ID = "20260714T100055.207160Z-49502732533cd7470f883488ed0a6131"
@@ -111,13 +112,28 @@ class FakeVerifier:
         return VerificationSummary(True, True, True)
 
 
+class FakeVerificationStore:
+    def __init__(self) -> None:
+        self.writes = []
+
+    def write_passed(self, **values):
+        self.writes.append(values)
+
+
+class FailingVerificationStore(FakeVerificationStore):
+    def write_passed(self, **values):
+        raise BackupVerificationError("BACKUP_VERIFICATION_WRITE_FAILED")
+
+
 def _service(tmp_path: Path, *, restore_returncode: int = 0):
     backup_root = tmp_path / "backups"
     backup_root.mkdir(mode=0o700)
     package = backup_root / BACKUP_ID
     package.mkdir(mode=0o700)
     (package / "database.dump").write_bytes(b"fake")
+    (package / "manifest.json").write_bytes(b"fake-manifest")
     os.chmod(package / "database.dump", 0o600)
+    os.chmod(package / "manifest.json", 0o600)
     settings = Settings(
         DATABASE_URL="postgresql+asyncpg://user:secret@127.0.0.1:5432/tg_hub",
         BACKUP_DIR=backup_root,
@@ -125,6 +141,7 @@ def _service(tmp_path: Path, *, restore_returncode: int = 0):
     )
     runner = FakeRunner(restore_returncode=restore_returncode)
     adapter = FakeAdapter()
+    verification_store = FakeVerificationStore()
     service = RestoreVerificationService(
         settings,
         repository_root=tmp_path,
@@ -132,6 +149,7 @@ def _service(tmp_path: Path, *, restore_returncode: int = 0):
         runner=runner,
         adapter_factory=lambda *_: adapter,
         verifier_factory=lambda *_: FakeVerifier(),
+        verification_store=verification_store,
         pg_restore_path=Path("/tools/pg_restore"),
     )
     service._load_manifest = lambda *_: SimpleNamespace(
@@ -157,6 +175,7 @@ async def test_run_uses_env_target_and_completes_fake_lifecycle(tmp_path) -> Non
     assert restore_env["PGDATABASE"].startswith("tg_hub_restore_verify_")
     assert adapter.drop_calls == 1
     assert adapter.closed is True
+    assert len(service.verification_store.writes) == 1
     assert list(service.store.root.glob("*.json")) == []
 
 
@@ -220,6 +239,25 @@ async def test_drop_success_record_delete_failure_reports_dropped_target(tmp_pat
     assert service.store.read(result.cleanup_handle).phase == "verification_passed"
 
 
+async def test_sidecar_write_failure_preserves_completed_restore_facts(tmp_path) -> None:
+    service, _, adapter = _service(tmp_path)
+    service.verification_store = FailingVerificationStore()
+
+    result = await service.run(BACKUP_ID)
+
+    assert result.status == "fail"
+    assert result.error_code == "BACKUP_VERIFICATION_WRITE_FAILED"
+    assert result.target_created == "yes"
+    assert result.restore_completed == "yes"
+    assert result.schema_verified == "yes"
+    assert result.constraints_verified == "yes"
+    assert result.integrity_verified == "yes"
+    assert result.target_dropped == "yes"
+    assert result.cleanup_required == "no"
+    assert adapter.exists is False
+    assert list(service.store.root.glob("*.json")) == []
+
+
 @pytest.mark.skipif(
     os.environ.get("RUN_RESTORE_VERIFY_INTEGRATION") != "1",
     reason="requires explicitly approved local PostgreSQL test fixture restore",
@@ -243,6 +281,9 @@ async def test_real_temporary_fixture_dump_restore_verify_and_drop(tmp_path) -> 
     package.mkdir(mode=0o700, parents=True)
     os.chmod(backup_root, 0o700)
     dump_path = package / "database.dump"
+    manifest_path = package / "manifest.json"
+    manifest_path.write_bytes(b"temporary-fixture-manifest")
+    os.chmod(manifest_path, 0o600)
     spec = parse_pg_connection_spec(database_url)
     runner = CapturingPgToolRunner(timeout_seconds=120)
     engine = create_async_engine(database_url)
@@ -277,6 +318,7 @@ async def test_real_temporary_fixture_dump_restore_verify_and_drop(tmp_path) -> 
         repository_root=tmp_path,
         validator=FakeValidator(),
         runner=runner,
+        verification_store=FakeVerificationStore(),
         pg_restore_path=pg_restore,
     )
     service._load_manifest = lambda *_: SimpleNamespace(

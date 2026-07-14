@@ -46,7 +46,7 @@
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
 | P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
-| P6-Deploy-4 | 备份与恢复 | 🚧 4B、4C-C1/C2 完成 | 真实隔离恢复通过；4D 未授权 |
+| P6-Deploy-4 | 备份与恢复 | 🚧 4B、4C-C1/C2、4D-1 完成 | 608 全量通过；4D-1B 未授权 |
 | P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
 
 ---
@@ -70,7 +70,8 @@
 - Telethon `disconnect()` 返回 Future 的真实环境兼容问题已修复，完整回归为 `533 passed`。
 - `P6-Arch-Fix-1` 已完成：真实 Telethon adapter 生成版本化受控 payload 和媒体引用，ingestion 原样保存；RawMessage 到 Channel 的外键已改为 `ON DELETE RESTRICT`，完整迁移链和 `537` 项回归通过。
 - `P6-Deploy-3D-4` 已完成归档：真实轮转、Session 锁竞争和完整在线预检均通过；`StartInterval=3600` 后续自然周期属于非阻塞运维观察。
-- `P6-Deploy-4B` 已完成真实生产备份验收；`P6-Deploy-4C-C1` 已完成实现，专项测试 `38 passed, 3 skipped`，完整回归 `600 passed, 3 skipped`。`P6-Deploy-4C-C2` 已使用真实 4B package 完成随机隔离库 restore、schema/constraint/integrity 只读验证和 guarded DROP；无需 cleanup，隔离数据库与 recovery record 均无残留。4D、生产恢复和 `P6-Deploy-5` 均未授权。
+- `P6-Deploy-4B` 已完成真实生产备份验收；`P6-Deploy-4C-C1` 已完成实现，专项测试 `38 passed, 3 skipped`，完整回归 `600 passed, 3 skipped`。`P6-Deploy-4C-C2` 已使用真实 4B package 完成随机隔离库 restore、schema/constraint/integrity 只读验证和 guarded DROP；无需 cleanup，隔离数据库与 recovery record 均无残留。4D-1B、生产恢复和 `P6-Deploy-5` 均未授权。
+- `P6-Deploy-4D-1` 已完成只读 backup inventory、verification sidecar store 和 C2 sidecar integration code；专项测试 `39 passed, 1 skipped`，完整回归 `608 passed, 3 skipped`。未读取真实 backup package，未签发真实 sidecar，未执行 pin、retention 或生产恢复。
 
 ---
 
@@ -136,7 +137,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已完成 `P6-Deploy-4B` 和 `P6-Deploy-4C-C1/C2`。`production.env` 已使用显式 PostgreSQL 用户名，主 LaunchAgent 重启后的 liveness/readiness 均通过。下一步单独设计与评审 4D；生产恢复及 Deploy-5 仍需分别授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已完成 `P6-Deploy-4B`、`P6-Deploy-4C-C1/C2` 和 `P6-Deploy-4D-1`。下一步必须单独评审并授权 4D-1B，才可对真实 package 重跑 C2 并签发 verification sidecar；4D-2、真实 pin、真实 retention、4D-4、生产恢复及 Deploy-5 仍需分别授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 
