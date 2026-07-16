@@ -10,6 +10,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from app.deploy.backup_models import PgConnectionSpec, validate_restore_target_name
+from app.deploy.production_recovery_postgres_models import DATABASE_PATTERN
 
 IDENTITY_PREFIX = "tg-hub-restore-verify:"
 REQUIRED_TABLES = frozenset(
@@ -178,14 +179,25 @@ class RestoreDatabaseAdapter:
 
 
 class RestoreDatabaseVerifier:
-    def __init__(self, database_url: str, *, statement_timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        statement_timeout_seconds: int = 30,
+        generated_rehearsal_only: bool = False,
+    ) -> None:
         self.database_url = database_url
         self.statement_timeout_seconds = statement_timeout_seconds
+        self.generated_rehearsal_only = generated_rehearsal_only
 
     async def verify(
         self, target: str, *, expected_revision: str
     ) -> VerificationSummary:
-        validate_restore_target_name(target)
+        if self.generated_rehearsal_only:
+            if not DATABASE_PATTERN.fullmatch(target):
+                raise RestoreDatabaseError("RESTORE_TARGET_UNSAFE")
+        else:
+            validate_restore_target_name(target)
         engine = create_async_engine(database_url_for(self.database_url, target))
         connection: AsyncConnection | None = None
         try:

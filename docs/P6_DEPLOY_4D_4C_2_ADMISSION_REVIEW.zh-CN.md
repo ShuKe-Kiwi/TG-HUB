@@ -3,11 +3,12 @@
 > 项目：tg-hub
 > 阶段：P6-Deploy-4D-4C-2
 > 日期：2026-07-16
-> 状态：approved-with-runtime-gate
+> 状态：happy-path-complete
 
 > 实施进度：4C-2A real provider/adapter 最终代码复审已通过；首次 read-only runtime preflight
 > 未通过；dedicated role 创建后第二次 read-only runtime preflight 已通过。真实 generated
-> PostgreSQL 演练尚未执行。
+> PostgreSQL happy-path 演练已完成；脱敏结果见
+> `P6_DEPLOY_4D_4C_2_HAPPY_PATH_RESULT.zh-CN.md`。
 
 4C-2A 实现期增加了 durable replacement workflow guard：replacement CREATE、identity commit
 分别要求 4B 主记录处于 `replacement_create_started`、`identity_commit_started`；replacement DROP

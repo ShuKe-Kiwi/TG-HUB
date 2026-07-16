@@ -46,7 +46,8 @@
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
 | P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
-| P6-Deploy-4 | 备份与恢复 | 🚧 4D-4B-R2 修正及最终复审完成 | 727 全量通过；真实生产恢复未授权 |
+| P6-Deploy-4 | 备份与恢复 | 🚧 4D-4C-2 generated PostgreSQL happy path 完成 | 762 全量通过，4 skipped；真实生产恢复未授权 |
+| P6-Deploy-4D-4C-2 | 本机 generated PostgreSQL 恢复演练 | ✅ 完成 | Alembic/dump/restore/verify/switch/rollback/cleanup；residue=0 |
 | P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
 
 ---

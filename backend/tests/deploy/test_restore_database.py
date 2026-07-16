@@ -78,6 +78,16 @@ def test_expected_constraints_include_locked_pk_unique_and_fk_actions() -> None:
     ) in constraints
 
 
+async def test_generated_rehearsal_verifier_has_a_separate_strict_name_policy() -> None:
+    verifier = RestoreDatabaseVerifier(
+        "postgresql+asyncpg://user@127.0.0.1:5432/postgres",
+        generated_rehearsal_only=True,
+    )
+
+    with pytest.raises(RestoreDatabaseError, match="RESTORE_TARGET_UNSAFE"):
+        await verifier.verify("tg_hub", expected_revision="revision")
+
+
 @pytest.mark.skipif(
     os.environ.get("RUN_RESTORE_ADAPTER_INTEGRATION") != "1",
     reason="requires an explicitly approved local PostgreSQL test instance",
