@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import hashlib
 import os
 import shutil
+import stat
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -28,6 +30,7 @@ from app.deploy.backup_models import (
     require_restore_version_compatibility,
     validate_backup_id,
 )
+from app.deploy.backup_inventory import BackupInventoryService
 from app.deploy.backup_service import (
     BackupServiceError,
     PgToolRunner,
@@ -52,6 +55,20 @@ MIN_RESTORE_TIMEOUT_SECONDS = 30
 MAX_RESTORE_TIMEOUT_SECONDS = 6 * 60 * 60
 
 
+@dataclass(frozen=True)
+class _PackageIdentity:
+    root_identity: tuple[int, int, int]
+    backup_id: str
+    manifest_sha256: str
+    manifest_size: int
+    database_dump_sha256: str
+    database_dump_size: int
+    watchlist_sha256: str
+    watchlist_size: int
+    manifest: BackupManifest
+    package_directory_identity: tuple[int, int, int]
+
+
 class RestoreVerificationService:
     def __init__(
         self,
@@ -62,6 +79,7 @@ class RestoreVerificationService:
         runner: PgToolRunner | None = None,
         recovery_store: RestoreRecoveryStore | None = None,
         verification_store: BackupVerificationStore | None = None,
+        inventory_service: BackupInventoryService | None = None,
         adapter_factory: Callable[[str, PgConnectionSpec], RestoreDatabaseAdapter]
         | None = None,
         verifier_factory: Callable[[str], RestoreDatabaseVerifier] | None = None,
@@ -78,6 +96,12 @@ class RestoreVerificationService:
         self.store = recovery_store or RestoreRecoveryStore(runtime_root)
         self.verification_store = verification_store or BackupVerificationStore(
             settings.BACKUP_DIR
+        )
+        self.inventory_service = inventory_service or BackupInventoryService(
+            settings,
+            validator=self.validator,
+            runner=self.runner,
+            pg_restore_path=pg_restore_path,
         )
         self.adapter_factory = adapter_factory or (
             lambda url, spec: RestoreDatabaseAdapter(url, spec)
@@ -192,7 +216,11 @@ class RestoreVerificationService:
         validation = await self.validator.validate_locked(backup_id)
         if validation.status != "pass":
             return self._failed(backup_id, validation.error_code or "BACKUP_MANIFEST_INVALID")
-        manifest = self._load_manifest(root / backup_id / "manifest.json")
+        try:
+            initial_identity = self._capture_package_identity(root, backup_id)
+        except (BackupFsError, BackupServiceError):
+            return self._failed(backup_id, "BACKUP_PACKAGE_CHANGED_DURING_VERIFY")
+        manifest = initial_identity.manifest
         expected_head = self._expected_head()
         if manifest.alembic_revision != expected_head:
             return self._failed(backup_id, "RESTORE_CODE_REVISION_MISMATCH")
@@ -294,14 +322,46 @@ class RestoreVerificationService:
             target_dropped = True
             self.store.delete(record.opaque_id)
             try:
-                manifest_sha256, _ = stream_sha256(
-                    root / backup_id / "manifest.json"
-                )
+                final_identity = self._capture_package_identity(root, backup_id)
+                if not self._same_package_identity(
+                    initial_identity, final_identity
+                ):
+                    return RestoreVerificationResult(
+                        status="fail",
+                        backup_id=backup_id,
+                        target_created="yes",
+                        restore_completed="yes",
+                        schema_verified="yes",
+                        constraints_verified="yes",
+                        integrity_verified="yes",
+                        target_dropped="yes",
+                        cleanup_required="no",
+                        restore_timeout_seconds=self.timeout,
+                        error_code="BACKUP_PACKAGE_CHANGED_DURING_VERIFY",
+                    )
                 self.verification_store.write_passed(
                     manifest=manifest,
-                    manifest_sha256=manifest_sha256,
+                    manifest_sha256=initial_identity.manifest_sha256,
                 )
-            except (BackupFsError, BackupVerificationError):
+                projected = await self.inventory_service.target_locked(
+                    root, backup_id
+                )
+                if (
+                    projected.restore_verified != "yes"
+                    or projected.verification_status != "valid"
+                    or projected.verification_version != 1
+                    or projected.retention_disposition == "manual_review"
+                ):
+                    raise BackupVerificationError(
+                        "BACKUP_VERIFICATION_IDENTITY_INVALID"
+                    )
+            except BackupFsError as exc:
+                code = (
+                    "BACKUP_PACKAGE_CHANGED_DURING_VERIFY"
+                    if exc.error_code
+                    == "BACKUP_PACKAGE_CHANGED_DURING_VERIFY"
+                    else "BACKUP_VERIFICATION_WRITE_FAILED"
+                )
                 return RestoreVerificationResult(
                     status="fail",
                     backup_id=backup_id,
@@ -313,7 +373,28 @@ class RestoreVerificationService:
                     target_dropped="yes",
                     cleanup_required="no",
                     restore_timeout_seconds=self.timeout,
-                    error_code="BACKUP_VERIFICATION_WRITE_FAILED",
+                    error_code=code,
+                )
+            except (BackupServiceError, BackupVerificationError) as exc:
+                code = getattr(
+                    exc,
+                    "error_code",
+                    "BACKUP_VERIFICATION_IDENTITY_INVALID",
+                )
+                if isinstance(exc, BackupServiceError):
+                    code = "BACKUP_VERIFICATION_IDENTITY_INVALID"
+                return RestoreVerificationResult(
+                    status="fail",
+                    backup_id=backup_id,
+                    target_created="yes",
+                    restore_completed="yes",
+                    schema_verified="yes",
+                    constraints_verified="yes",
+                    integrity_verified="yes",
+                    target_dropped="yes",
+                    cleanup_required="no",
+                    restore_timeout_seconds=self.timeout,
+                    error_code=code,
                 )
             return RestoreVerificationResult(
                 status="pass",
@@ -350,13 +431,76 @@ class RestoreVerificationService:
         finally:
             await adapter.aclose()
 
-    def _load_manifest(self, path: Path) -> BackupManifest:
+    def _capture_package_identity(
+        self, root: Path, backup_id: str
+    ) -> _PackageIdentity:
+        validate_backup_id(backup_id)
+        root_info = root.lstat()
+        package = root / backup_id
+        package_info = package.lstat()
+        if (
+            stat.S_ISLNK(root_info.st_mode)
+            or not stat.S_ISDIR(root_info.st_mode)
+            or stat.S_ISLNK(package_info.st_mode)
+            or not stat.S_ISDIR(package_info.st_mode)
+            or package.parent != root
+            or package.name != backup_id
+        ):
+            raise BackupFsError("BACKUP_PACKAGE_CHANGED_DURING_VERIFY")
+        manifest_payload = read_regular_exact(
+            package / "manifest.json", max_bytes=MAX_MANIFEST_BYTES
+        )
         try:
-            return BackupManifest.model_validate(
-                json.loads(read_regular_exact(path, max_bytes=MAX_MANIFEST_BYTES))
-            )
+            manifest = BackupManifest.model_validate_json(manifest_payload)
         except Exception as exc:
-            raise BackupServiceError("BACKUP_MANIFEST_INVALID") from exc
+            raise BackupFsError("BACKUP_PACKAGE_CHANGED_DURING_VERIFY") from exc
+        if manifest.backup_id != backup_id:
+            raise BackupFsError("BACKUP_PACKAGE_CHANGED_DURING_VERIFY")
+        dump_sha256, dump_size = stream_sha256(package / "database.dump")
+        watch_sha256, watch_size = stream_sha256(package / "watchlist.json")
+        if (
+            dump_sha256 != manifest.database.sha256
+            or dump_size != manifest.database.size_bytes
+            or watch_sha256 != manifest.watchlist.sha256
+            or watch_size != manifest.watchlist.size_bytes
+        ):
+            raise BackupFsError("BACKUP_PACKAGE_CHANGED_DURING_VERIFY")
+        return _PackageIdentity(
+            root_identity=(
+                root_info.st_dev,
+                root_info.st_ino,
+                stat.S_IFMT(root_info.st_mode),
+            ),
+            backup_id=backup_id,
+            manifest_sha256=hashlib.sha256(manifest_payload).hexdigest(),
+            manifest_size=len(manifest_payload),
+            database_dump_sha256=dump_sha256,
+            database_dump_size=dump_size,
+            watchlist_sha256=watch_sha256,
+            watchlist_size=watch_size,
+            manifest=manifest,
+            package_directory_identity=(
+                package_info.st_dev,
+                package_info.st_ino,
+                stat.S_IFMT(package_info.st_mode),
+            ),
+        )
+
+    @staticmethod
+    def _same_package_identity(
+        initial: _PackageIdentity, final: _PackageIdentity
+    ) -> bool:
+        return (
+            initial.root_identity == final.root_identity
+            and initial.backup_id == final.backup_id
+            and initial.manifest_sha256 == final.manifest_sha256
+            and initial.manifest_size == final.manifest_size
+            and initial.database_dump_sha256 == final.database_dump_sha256
+            and initial.database_dump_size == final.database_dump_size
+            and initial.watchlist_sha256 == final.watchlist_sha256
+            and initial.watchlist_size == final.watchlist_size
+            and initial.manifest == final.manifest
+        )
 
     def _expected_head(self) -> str:
         from app.deploy.backup_service import _expected_alembic_head

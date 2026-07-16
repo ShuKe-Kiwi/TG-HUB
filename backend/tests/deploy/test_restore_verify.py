@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import getpass
+import hashlib
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.config import Settings
-from app.deploy.backup_models import BackupValidationResult
+from app.deploy.backup_models import (
+    BackupExclusions,
+    BackupManifest,
+    BackupValidationResult,
+    DatabaseBackupManifest,
+    WatchlistBackupManifest,
+)
 from app.deploy.backup_service import (
     PgToolRunner,
     ToolResult,
@@ -107,6 +115,16 @@ class DeleteFailingStore(RestoreRecoveryStore):
         raise RestoreRecoveryError("RESTORE_RECOVERY_WRITE_FAILED")
 
 
+class MutatingDeleteStore(RestoreRecoveryStore):
+    def __init__(self, root: Path, dump_path: Path) -> None:
+        super().__init__(root)
+        self.dump_path = dump_path
+
+    def delete(self, opaque_id: str) -> None:
+        super().delete(opaque_id)
+        self.dump_path.write_bytes(b"changed-after-restore")
+
+
 class FakeVerifier:
     async def verify(self, target: str, *, expected_revision: str):
         return VerificationSummary(True, True, True)
@@ -125,15 +143,59 @@ class FailingVerificationStore(FakeVerificationStore):
         raise BackupVerificationError("BACKUP_VERIFICATION_WRITE_FAILED")
 
 
+class FakeInventoryService:
+    async def target_locked(self, root, backup_id):
+        return SimpleNamespace(
+            restore_verified="yes",
+            verification_status="valid",
+            verification_version=1,
+            retention_disposition="keep",
+        )
+
+
 def _service(tmp_path: Path, *, restore_returncode: int = 0):
     backup_root = tmp_path / "backups"
     backup_root.mkdir(mode=0o700)
     package = backup_root / BACKUP_ID
     package.mkdir(mode=0o700)
-    (package / "database.dump").write_bytes(b"fake")
-    (package / "manifest.json").write_bytes(b"fake-manifest")
-    os.chmod(package / "database.dump", 0o600)
-    os.chmod(package / "manifest.json", 0o600)
+    dump = b"fake"
+    watchlist = b"{}"
+    manifest = BackupManifest(
+        backup_id=BACKUP_ID,
+        created_at_utc=datetime(2026, 7, 14, 12, tzinfo=timezone.utc),
+        app_git_commit="a" * 40,
+        git_worktree_clean=True,
+        python_version="3.12.8",
+        dependency_lock_sha256="b" * 64,
+        alembic_revision="head",
+        config_schema_version=1,
+        database=DatabaseBackupManifest(
+            sha256=hashlib.sha256(dump).hexdigest(),
+            size_bytes=len(dump),
+            source_server_version="16.4",
+            source_server_major=16,
+            pg_dump_version="pg_dump (PostgreSQL) 16.4",
+            pg_dump_major=16,
+        ),
+        watchlist=WatchlistBackupManifest(
+            sha256=hashlib.sha256(watchlist).hexdigest(),
+            size_bytes=len(watchlist),
+            revision="revision",
+        ),
+        exclusions=BackupExclusions(
+            production_env="secret_material_excluded",
+            telethon_session="authentication_session_excluded",
+            logs="operational_data_excluded",
+            runtime_state="ephemeral_data_excluded",
+        ),
+    )
+    (package / "database.dump").write_bytes(dump)
+    (package / "watchlist.json").write_bytes(watchlist)
+    (package / "manifest.json").write_bytes(
+        manifest.model_dump_json().encode("utf-8")
+    )
+    for path in package.iterdir():
+        os.chmod(path, 0o600)
     settings = Settings(
         DATABASE_URL="postgresql+asyncpg://user:secret@127.0.0.1:5432/tg_hub",
         BACKUP_DIR=backup_root,
@@ -150,11 +212,8 @@ def _service(tmp_path: Path, *, restore_returncode: int = 0):
         adapter_factory=lambda *_: adapter,
         verifier_factory=lambda *_: FakeVerifier(),
         verification_store=verification_store,
+        inventory_service=FakeInventoryService(),
         pg_restore_path=Path("/tools/pg_restore"),
-    )
-    service._load_manifest = lambda *_: SimpleNamespace(
-        alembic_revision="head",
-        database=SimpleNamespace(source_server_major=16, pg_dump_major=16),
     )
     service._expected_head = lambda: "head"
     return service, runner, adapter
@@ -256,6 +315,57 @@ async def test_sidecar_write_failure_preserves_completed_restore_facts(tmp_path)
     assert result.cleanup_required == "no"
     assert adapter.exists is False
     assert list(service.store.root.glob("*.json")) == []
+
+
+async def test_package_change_after_cleanup_refuses_sidecar(tmp_path) -> None:
+    service, _, adapter = _service(tmp_path)
+    service.store = MutatingDeleteStore(
+        service.store.root,
+        service.settings.BACKUP_DIR / BACKUP_ID / "database.dump",
+    )
+
+    result = await service.run(BACKUP_ID)
+
+    assert result.status == "fail"
+    assert result.error_code == "BACKUP_PACKAGE_CHANGED_DURING_VERIFY"
+    assert result.target_dropped == "yes"
+    assert result.cleanup_required == "no"
+    assert adapter.exists is False
+    assert service.verification_store.writes == []
+    assert list(service.store.root.glob("*.json")) == []
+
+
+def test_equivalent_package_directory_replacement_preserves_identity(
+    tmp_path,
+) -> None:
+    service, _, _ = _service(tmp_path)
+    root = service.settings.BACKUP_DIR
+    package = root / BACKUP_ID
+    replacement = root / f"{BACKUP_ID}.replacement"
+    displaced = root / f"{BACKUP_ID}.displaced"
+    initial = service._capture_package_identity(root, BACKUP_ID)
+    shutil.copytree(package, replacement)
+    package.rename(displaced)
+    replacement.rename(package)
+
+    final = service._capture_package_identity(root, BACKUP_ID)
+
+    assert initial.package_directory_identity != final.package_directory_identity
+    assert service._same_package_identity(initial, final) is True
+
+
+def test_backup_root_identity_change_invalidates_package_identity(tmp_path) -> None:
+    service, _, _ = _service(tmp_path)
+    root = service.settings.BACKUP_DIR
+    displaced = tmp_path / "backups.displaced"
+    initial = service._capture_package_identity(root, BACKUP_ID)
+    root.rename(displaced)
+    shutil.copytree(displaced, root)
+
+    final = service._capture_package_identity(root, BACKUP_ID)
+
+    assert initial.root_identity != final.root_identity
+    assert service._same_package_identity(initial, final) is False
 
 
 @pytest.mark.skipif(

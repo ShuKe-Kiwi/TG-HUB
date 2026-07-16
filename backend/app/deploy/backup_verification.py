@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 
 from app.deploy.backup_fs import (
     BackupFsError,
-    atomic_write_bytes,
+    create_bytes_if_absent,
     ensure_private_directory,
     read_regular_exact,
     validate_backup_root,
@@ -73,12 +74,14 @@ class BackupVerificationStore:
                 ).encode("utf-8")
                 + b"\n"
             )
-            atomic_write_bytes(
+            create_bytes_if_absent(
                 self._path(manifest.backup_id),
                 payload,
                 token=os.urandom(8).hex(),
             )
-            return sidecar
+            return self._read_exact(sidecar)
+        except BackupVerificationError:
+            raise
         except (
             BackupFsError,
             OSError,
@@ -89,6 +92,43 @@ class BackupVerificationStore:
             raise BackupVerificationError(
                 "BACKUP_VERIFICATION_WRITE_FAILED"
             ) from exc
+
+    def _read_exact(
+        self, expected: BackupVerificationSidecar
+    ) -> BackupVerificationSidecar:
+        try:
+            validate_backup_root(self.root)
+            path = self._path(expected.backup_id)
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
+                raise BackupVerificationError(
+                    "BACKUP_VERIFICATION_IDENTITY_INVALID"
+                )
+            actual = BackupVerificationSidecar.model_validate_json(
+                read_regular_exact(
+                    path,
+                    max_bytes=MAX_VERIFICATION_SIDECAR_BYTES,
+                )
+            )
+        except BackupVerificationError:
+            raise
+        except (BackupFsError, OSError, ValidationError, ValueError) as exc:
+            raise BackupVerificationError(
+                "BACKUP_VERIFICATION_IDENTITY_INVALID"
+            ) from exc
+        if (
+            actual.backup_id != expected.backup_id
+            or actual.manifest_sha256 != expected.manifest_sha256
+            or actual.database_dump_sha256 != expected.database_dump_sha256
+            or actual.watchlist_snapshot_sha256
+            != expected.watchlist_snapshot_sha256
+            or actual.result != expected.result
+            or actual.verification_version != expected.verification_version
+        ):
+            raise BackupVerificationError(
+                "BACKUP_VERIFICATION_IDENTITY_INVALID"
+            )
+        return actual
 
     def observe(
         self,

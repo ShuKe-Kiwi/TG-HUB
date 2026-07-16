@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from datetime import datetime, timezone
+
+import pytest
 
 from app.deploy.backup_models import (
     BackupExclusions,
@@ -12,6 +15,7 @@ from app.deploy.backup_models import (
     WatchlistBackupManifest,
 )
 from app.deploy.backup_verification import BackupVerificationStore
+from app.deploy.backup_verification import BackupVerificationError
 
 BACKUP_ID = "20260714T120000.123456Z-0123456789abcdef0123456789abcdef"
 
@@ -85,6 +89,47 @@ def test_verification_store_maps_missing_and_identity_mismatch(tmp_path) -> None
     assert missing.status == "missing"
     assert mismatched.status == "invalid"
     assert mismatched.error_code == "BACKUP_VERIFICATION_IDENTITY_INVALID"
+
+
+def test_exact_existing_sidecar_is_confirmed_without_rewrite(tmp_path) -> None:
+    root = tmp_path / "backups"
+    root.mkdir(mode=0o700)
+    manifest = _manifest()
+    store = BackupVerificationStore(root)
+    first = store.write_passed(
+        manifest=manifest,
+        manifest_sha256="e" * 64,
+        verified_at_utc=datetime(2026, 7, 14, 13, tzinfo=timezone.utc),
+    )
+    path = store.root / f"{BACKUP_ID}.json"
+    original_mtime = path.stat().st_mtime_ns
+    os.utime(path, ns=(original_mtime, original_mtime))
+
+    confirmed = store.write_passed(
+        manifest=manifest,
+        manifest_sha256="e" * 64,
+        verified_at_utc=datetime(2026, 7, 14, 14, tzinfo=timezone.utc),
+    )
+
+    assert confirmed.verified_at_utc == first.verified_at_utc
+    assert path.stat().st_mtime_ns == original_mtime
+
+
+def test_invalid_existing_sidecar_is_not_overwritten(tmp_path) -> None:
+    root = tmp_path / "backups"
+    root.mkdir(mode=0o700)
+    store = BackupVerificationStore(root)
+    store.root.mkdir(mode=0o700)
+    path = store.root / f"{BACKUP_ID}.json"
+    original = b"invalid evidence\n"
+    path.write_bytes(original)
+    path.chmod(0o600)
+
+    with pytest.raises(BackupVerificationError) as raised:
+        store.write_passed(manifest=_manifest(), manifest_sha256="e" * 64)
+
+    assert raised.value.error_code == "BACKUP_VERIFICATION_IDENTITY_INVALID"
+    assert path.read_bytes() == original
 
 
 def test_verification_store_rejects_unsupported_newer_schema(tmp_path) -> None:

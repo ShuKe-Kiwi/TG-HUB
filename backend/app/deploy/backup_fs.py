@@ -123,6 +123,37 @@ def atomic_write_bytes(path: Path, payload: bytes, *, token: str) -> None:
             pass
 
 
+def create_bytes_if_absent(path: Path, payload: bytes, *, token: str) -> bool:
+    """Durably publish a complete regular file without replacing an existing one."""
+    temp = path.parent / f".{path.name}.{token}.tmp"
+    fd: int | None = None
+    try:
+        fd = open_regular(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        write_all(fd, payload)
+        os.fsync(fd)
+        os.close(fd)
+        fd = None
+        try:
+            os.link(temp, path, follow_symlinks=False)
+        except FileExistsError:
+            return False
+        fsync_directory(path.parent)
+        return True
+    except BackupFsError:
+        raise
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise BackupFsError("BACKUP_SPACE_INSUFFICIENT") from exc
+        raise BackupFsError("BACKUP_PATH_INVALID") from exc
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def read_regular_exact(path: Path, *, max_bytes: int) -> bytes:
     fd = open_regular(path, os.O_RDONLY)
     try:

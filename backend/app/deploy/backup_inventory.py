@@ -68,6 +68,16 @@ class BackupInventoryService:
         except (BackupFsError, BackupServiceError, BackupVerificationError):
             return self._failed()
 
+    async def target_locked(
+        self, root: Path, backup_id: str
+    ) -> BackupInventoryItem:
+        """Project one package while the caller owns the backup-root lock."""
+        if root != self.settings.BACKUP_DIR.expanduser():
+            raise BackupFsError("BACKUP_PATH_INVALID")
+        if not BACKUP_ID_PATTERN.fullmatch(backup_id):
+            raise BackupFsError("BACKUP_INVENTORY_INVALID")
+        return await self._item_locked(root, root / backup_id, backup_id)
+
     async def _inventory_locked(self, root: Path) -> BackupInventoryResult:
         entries: list[BackupInventoryItem] = []
         package_ids: set[str] = set()
