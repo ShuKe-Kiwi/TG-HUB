@@ -35,6 +35,8 @@ class ServerRoleObservation:
         "server_identity_digest",
         "role_oid",
         "role_identity_digest",
+        "role_can_create_database",
+        "role_is_superuser",
         "_secret",
         "_sealed",
     )
@@ -46,6 +48,8 @@ class ServerRoleObservation:
         server_identity_digest: str,
         role_oid: int,
         role_identity_digest: str,
+        role_can_create_database: bool,
+        role_is_superuser: bool,
         secret: object,
     ) -> None:
         if secret is not _OBSERVATION_SECRET:
@@ -61,6 +65,8 @@ class ServerRoleObservation:
         self.server_identity_digest = server_identity_digest
         self.role_oid = role_oid
         self.role_identity_digest = role_identity_digest
+        self.role_can_create_database = role_can_create_database
+        self.role_is_superuser = role_is_superuser
         self._secret = secret
         self._sealed = True
 
@@ -102,6 +108,8 @@ class FakeObservationProvider:
             server_identity_digest=hashlib.sha256(b"fake-server").hexdigest(),
             role_oid=self.role_oid,
             role_identity_digest=hashlib.sha256(b"fake-role").hexdigest(),
+            role_can_create_database=True,
+            role_is_superuser=False,
             secret=_OBSERVATION_SECRET,
         )
 
@@ -257,6 +265,23 @@ class TempPostgresCapabilityIssuer:
     ) -> TempPostgresRehearsalCapability:
         root, device, inode = validate_temp_root(root)
         observation = provider.observe(spec)
+        return self._issue_initial_observed(
+            root=root,
+            device=device,
+            inode=inode,
+            spec=spec,
+            observation=observation,
+        )
+
+    def _issue_initial_observed(
+        self,
+        *,
+        root: Path,
+        device: int,
+        inode: int,
+        spec: PgConnectionSpec,
+        observation: ServerRoleObservation,
+    ) -> TempPostgresRehearsalCapability:
         _require_trusted_observation(observation)
         run_id = secrets.token_hex(16)
         suffix = secrets.token_hex(8)
@@ -536,6 +561,31 @@ def _require_connection_binding(
 def _require_trusted_observation(observation: ServerRoleObservation) -> None:
     if observation._secret is not _OBSERVATION_SECRET:
         raise TempPostgresRehearsalError("TEMP_REHEARSAL_NOT_AUTHORIZED")
+    if (
+        not observation.role_can_create_database
+        or observation.role_is_superuser
+    ):
+        raise TempPostgresRehearsalError("TEMP_REHEARSAL_CONNECTION_UNSAFE")
+
+
+def _create_trusted_observation(
+    *,
+    server_major: int,
+    server_identity_digest: str,
+    role_oid: int,
+    role_identity_digest: str,
+    role_can_create_database: bool,
+    role_is_superuser: bool,
+) -> ServerRoleObservation:
+    return ServerRoleObservation(
+        server_major=server_major,
+        server_identity_digest=server_identity_digest,
+        role_oid=role_oid,
+        role_identity_digest=role_identity_digest,
+        role_can_create_database=role_can_create_database,
+        role_is_superuser=role_is_superuser,
+        secret=_OBSERVATION_SECRET,
+    )
 
 
 def _require_database_action(

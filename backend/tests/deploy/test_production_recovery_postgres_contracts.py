@@ -71,6 +71,8 @@ def test_observation_and_capability_reject_public_construction_and_copy(
             server_identity_digest="a" * 64,
             role_oid=1,
             role_identity_digest="b" * 64,
+            role_can_create_database=True,
+            role_is_superuser=False,
             secret=object(),
         )
     capability, _ = issue(tmp_path)
@@ -228,6 +230,15 @@ def test_empty_catalog_uses_fixed_allowlist() -> None:
         ),
     )
     assert classify_empty_catalog(extra) == "partial"
+    unsafe_system_object = allowed + (
+        CatalogObject(
+            object_type="function",
+            schema_name="pg_catalog",
+            name="unexpected_owned_function",
+            user_owned=True,
+        ),
+    )
+    assert classify_empty_catalog(unsafe_system_object) == "partial"
 
 
 def test_toolchain_requires_matching_tools_not_older_than_server() -> None:

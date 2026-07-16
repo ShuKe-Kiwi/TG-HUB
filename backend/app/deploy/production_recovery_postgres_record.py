@@ -141,6 +141,12 @@ class TempPostgresRehearsalRecordStore:
             self._require_binding(record, identity)
             return record
 
+    def read_nonblocking(self) -> TempPostgresRehearsalRecord:
+        with self._locked(nonblocking=True) as identity:
+            record = self._read_unlocked()
+            self._require_binding(record, identity)
+            return record
+
     def advance(
         self,
         record: TempPostgresRehearsalRecord,

@@ -153,6 +153,15 @@ class ToolchainObservation(RehearsalContract):
     pg_restore_major: int = Field(gt=0)
 
 
+class LiveGeneratedDatabaseState(RehearsalContract):
+    exists: bool
+    owner_oid: int | None = Field(default=None, gt=0)
+    comment: str | None = None
+    active_connections: int = Field(ge=0)
+    prepared_transactions: int = Field(ge=0)
+    catalog_state: Literal["not_checked", "empty", "partial", "complete", "unknown"]
+
+
 class RehearsalCommand(RehearsalContract):
     argv: tuple[str, ...]
     env: dict[str, str]
@@ -256,10 +265,12 @@ def classify_restore_facts(facts: GeneratedDatabaseFacts) -> RestoreDisposition:
     }[facts.catalog_state]
 
 
-def classify_empty_catalog(objects: tuple[CatalogObject, ...]) -> Literal["empty", "partial"]:
+def classify_empty_catalog(
+    objects: tuple[CatalogObject, ...],
+) -> Literal["empty", "partial"]:
     system_schemas = {"pg_catalog", "information_schema"}
     for item in objects:
-        if item.schema_name in system_schemas:
+        if item.schema_name in system_schemas and not item.user_owned:
             continue
         if (
             item.object_type == "schema"

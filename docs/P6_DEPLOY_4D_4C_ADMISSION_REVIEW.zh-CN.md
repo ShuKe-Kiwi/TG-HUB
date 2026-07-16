@@ -5,6 +5,9 @@
 > 评审对象：`P6_DEPLOY_4D_4C_TEMP_POSTGRES_REHEARSAL_DESIGN.zh-CN.md`
 > 结果：approved_for_4C_1_only
 
+> 历史说明：本文记录 4C-1 当时的准入状态；4C-2 当前授权以
+> `P6_DEPLOY_4D_4C_2_ADMISSION_REVIEW.zh-CN.md` 为唯一准入依据。
+
 ## 1. 总体结论
 
 设计方向与 ARCHITECTURE.md、4C 隔离恢复、4D-4 durable recovery state machine 一致。数据库

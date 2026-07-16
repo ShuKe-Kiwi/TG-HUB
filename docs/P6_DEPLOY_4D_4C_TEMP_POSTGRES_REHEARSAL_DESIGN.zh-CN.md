@@ -3,12 +3,12 @@
 > 项目：tg-hub
 > 阶段：P6-Deploy-4D-4C
 > 日期：2026-07-16
-> 状态：design-locked
+> 状态：4C-2-admission-approved
 > ALLOW_4C_1_IMPLEMENTATION：yes
-> ALLOW_4C_2_IMPLEMENTATION：no
+> ALLOW_4C_2_IMPLEMENTATION：yes
 > ALLOW_4C_3_IMPLEMENTATION：no
 > ALLOW_4C_4_ARCHIVE：no
-> ALLOW_REAL_TEMP_POSTGRES_EXECUTION：no
+> ALLOW_REAL_TEMP_POSTGRES_EXECUTION：yes（仅 generated DB，须通过 4C-2 runtime preflight）
 > ALLOW_PRODUCTION_RECOVERY：no
 
 ## 1. 阶段目标
@@ -244,6 +244,10 @@ restore tool major 相同，且按 PostgreSQL 兼容矩阵验证 server major；
 - `PgToolRunner` 的 timeout/cancel/terminate/kill/reap；
 - 4A/4B 的 `ProductionRecoveryRecord`、operation lease 和 child cleanup owner。
 
+real adapter 必须同时读取 durable rehearsal record 与绑定的 4B workflow record。replacement
+CREATE、identity commit、DROP 分别受主记录 phase 和 cleanup child phase 约束；rehearsal record 的
+`workflow_record_id` 不能单独授予 replacement 操作权限。
+
 不得调用 `RestoreVerificationService.run()`，因为它拥有独立 recovery record 并在成功后立即
 DROP target，与 4D-4 生命周期冲突。
 
@@ -439,11 +443,13 @@ backend/app/deploy/
 ├── production_recovery_postgres.py
 ├── production_recovery_postgres_models.py
 ├── production_recovery_postgres_record.py
+├── production_recovery_postgres_real.py
 └── production_recovery_postgres_cli.py   # 仅后续显式 temp Gate
 
 backend/tests/deploy/
 ├── test_production_recovery_postgres_contracts.py
 ├── test_production_recovery_postgres_fake.py
+├── test_production_recovery_postgres_real.py
 └── test_production_recovery_postgres_integration.py
 ```
 
