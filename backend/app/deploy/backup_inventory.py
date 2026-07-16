@@ -37,6 +37,7 @@ MAX_SIDECAR_BYTES = 64 * 1024
 RESERVED_ROOT_ENTRIES = {
     ".backup.lock",
     ".pins",
+    ".pin-audit",
     ".recovery-holds",
     ".retention-pending",
     ".tmp",

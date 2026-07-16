@@ -2,12 +2,12 @@
 
 > 项目：tg-hub
 > 阶段：P6-Deploy-4D / Production Recovery
-> 状态：4D-2-design-reviewed / implementation-approved / real-gates-closed
+> 状态：4D-2-implementation-complete / real-gates-closed
 > 前置：P6-Deploy-4B、P6-Deploy-4C-C1/C2、P6-Deploy-4D-1/1B-1/1B-2 已完成
 > ALLOW_P6_DEPLOY_4D_1：yes
 > ALLOW_P6_DEPLOY_4D_1B：complete
-> ALLOW_P6_DEPLOY_4D_2：yes
-> ALLOW_RETENTION_APPLY_IMPLEMENTATION：yes-temp-only
+> ALLOW_P6_DEPLOY_4D_2：complete
+> ALLOW_RETENTION_APPLY_IMPLEMENTATION：complete-temp-only
 > ALLOW_P6_DEPLOY_4D_4：no
 > ALLOW_REAL_PIN_WRITE：no
 > ALLOW_PRODUCTION_RESTORE_IMPLEMENTATION：no
@@ -1263,7 +1263,7 @@ Deploy-5 final delivery acceptance
 
 ```text
 P6-DEPLOY-4D_DESIGN_REVIEW:
-  result: 4D_2_design_review_approved
+  result: 4D_2_implementation_complete
   architecture_direction: aligned
   previous_review_blockers_addressed: 6
   previous_review_recommendations_addressed: 6
@@ -1276,13 +1276,14 @@ P6-DEPLOY-4D_DESIGN_REVIEW:
   blockers:
     4D_2: 0
     later_stages: review_pending
-  latest_full_regression: 619_passed_3_skipped
+  4D_2_focused_tests: 11_passed
+  latest_full_regression: 630_passed_3_skipped
   real_verification_sidecar_issued: yes
   real_backup_package_accessed: yes
   allow_P6_Deploy_4D_1: complete
   allow_P6_Deploy_4D_1B: complete
-  allow_P6_Deploy_4D_2: yes
-  allow_retention_apply_implementation: yes_temp_only
+  allow_P6_Deploy_4D_2: complete
+  allow_retention_apply_implementation: complete_temp_only
   allow_real_pin_write: no
   allow_real_retention_delete: no
   allow_P6_Deploy_4D_4: no
@@ -1292,5 +1293,6 @@ P6-DEPLOY-4D_DESIGN_REVIEW:
 ```
 
 4D-1/1B-1/1B-2 已完成，真实 package 已通过隔离恢复并签发 valid verification sidecar。
-第四轮独立复审已批准 4D-2 的 selection、dry-run、pin/unpin 非真实实现和 temp-only apply
-engine。真实 pin、生产 apply CLI、真实 retention 删除、4D-4 和生产恢复仍需分别授权。
+第四轮独立复审批准的 4D-2 selection、dry-run、pin/unpin 非真实实现和 temp-only apply
+engine 已完成并通过回归。真实 pin、生产 apply CLI、真实 retention 删除、4D-4 和生产恢复
+仍需分别授权。
