@@ -2,4 +2,5 @@
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BACKEND=$(CDPATH= cd -- "$HERE/.." && pwd)
+cd "$BACKEND"
 exec "$BACKEND/.venv/bin/python" -m app.deploy.status

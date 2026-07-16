@@ -36,7 +36,7 @@
 | P6-2K-0 | 外部平台热播数据源可行性调查与设计 | ✅ 设计锁定，延期实现 | 文档审查通过 |
 | P6-2K-1A | Trending core contracts | ⏸ 暂停（项目完成后追加） | - |
 | P6-Arch-Fix-1 | RawMessage 原始证据与不可删除约束修正 | ✅ 完成 | 537 全量通过 |
-| P6-Deploy | 本机生产化交付闭环 | 🚧 实施中 | 600 全量通过 |
+| P6-Deploy | 本机生产化交付闭环 | ✅ 完成 | Deploy-5 最终验收通过 |
 | P6-Deploy-1 | health/readiness + production config contract | ✅ 完成 | 6/6 新增测试 |
 | P6-Deploy-2 | launchd + lifecycle scripts | ✅ 真实安装验收完成 | 11/11 Deploy；458 全量通过 |
 | P6-Deploy-3A | structured logging + redaction + stream split | ✅ 真实安装验收完成 | 4/4 日志专项；463 全量通过 |
@@ -46,9 +46,10 @@
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
 | P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
-| P6-Deploy-4 | 备份与恢复 | 🚧 4D-4C-2 generated PostgreSQL happy path 完成 | 762 全量通过，4 skipped；真实生产恢复未授权 |
+| P6-Deploy-4 | 备份与恢复 | ✅ 完成并归档 Runbook | 762 全量通过，4 skipped；真实生产恢复未执行 |
 | P6-Deploy-4D-4C-2 | 本机 generated PostgreSQL 恢复演练 | ✅ 完成 | Alembic/dump/restore/verify/switch/rollback/cleanup；residue=0 |
-| P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
+| P6-Deploy-4D-4D | 生产恢复 Runbook 归档 | ✅ 完成 | fake/temp/真实隔离恢复证据已汇总 |
+| P6-Deploy-5 | 最终交付验收 | ✅ 通过 | 服务、健康、轮转、备份、恢复验证均通过 |
 
 ---
 
@@ -144,7 +145,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已完成 `P6-Deploy-4B`、`P6-Deploy-4C-C1/C2` 和 `P6-Deploy-4D-1/1B-1/1B-2/2/3`。4D-3 真实 Gate A/B1/B2/C 已通过并以 `nothing_to_delete` 收口，未执行真实删除。下一步只允许进入 4D-4 生产恢复操作规范的设计与评审；真实生产恢复及 Deploy-5 当前仍未授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已完成 P6-Deploy-4D-4D Runbook 归档和 P6-Deploy-5 最终交付验收。真实生产恢复未执行且不是交付门槛；项目按本机单实例边界完成。稳定运行后如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 

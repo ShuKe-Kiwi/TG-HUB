@@ -25,7 +25,7 @@
 - EventBus 与可选 Bot 资源通知
 - CLI `preflight` / `run` 启动入口
 
-尚未完成：可视化管理台、history backfill、Outbox/可靠通知、生产 supervisor 和多实例运行语义。
+当前已完成本机可视化管理台、LaunchAgent 进程守护、结构化日志与轮转、备份、真实隔离恢复验证和生产恢复 Runbook。尚未包含 history backfill、Outbox/跨进程可靠通知和多实例运行语义。
 
 ## 2. 目录说明
 
@@ -208,6 +208,29 @@ cd /Users/kiwishook/nova_projects/tg-hub/backend
 ```
 
 数据库相关测试需要 PostgreSQL 测试库。`preflight` 不连接数据库；`run` 启动时会执行一次只读数据库可用性检查。
+
+### 6.1 本机生产服务
+
+从仓库根目录检查服务：
+
+```bash
+backend/deploy/status.sh
+backend/deploy/rotation_status.sh
+```
+
+管理台：`http://127.0.0.1:8010/admin/`
+
+生产环境文件：`~/.tg-hub/production.env`。不要通过 shell `source` 执行该文件。
+
+只读备份 inventory：
+
+```bash
+cd /Users/kiwishook/nova_projects/tg-hub/backend
+TG_HUB_ENV_FILE="$HOME/.tg-hub/production.env" \
+  ../.venv/bin/python -m app.deploy.backup_inventory
+```
+
+生产恢复必须遵循 [生产恢复 Runbook](PRODUCTION_RECOVERY_RUNBOOK.zh-CN.md)，逐 Gate 单独授权；日常运行不需要执行生产恢复。
 
 ## 7. P6-2B：watchlist 离线验收
 

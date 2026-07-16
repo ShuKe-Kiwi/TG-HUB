@@ -42,6 +42,7 @@ def test_runtime_scripts_use_backend_virtualenv() -> None:
         content = (DEPLOY / name).read_text(encoding="utf-8")
         assert '"$BACKEND/.venv/bin/python"' in content
         assert '"$BACKEND/../.venv/bin/python"' not in content
+    assert 'cd "$BACKEND"' in (DEPLOY / "status.sh").read_text(encoding="utf-8")
 
 
 def test_runtime_uses_server_module_without_uvicorn_log_reconfiguration() -> None:

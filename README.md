@@ -5,8 +5,8 @@
 Telegram resource aggregation backend.
 
 `tg-hub` ingests Telegram resource messages, parses and normalizes resource
-metadata, deduplicates resources, exposes query/bot-facing read models, and is
-currently adding a staged Telegram monitor.
+metadata, deduplicates resources, exposes query/bot-facing read models, and runs
+a staged long-lived Telegram monitor with local administration tooling.
 
 ## Current Status
 
@@ -23,12 +23,16 @@ split so dry-run validation does not silently become a production monitor.
 | P6-2C-0B controlled channel resolution | Implemented |
 | P6-2C-1 listener dry-run design | Locked |
 | P6-2C-2 short-window listener dry-run | Implemented |
-| P6-2D long-running monitor runtime | Lifecycle implemented, production ingest not enabled |
+| P6-2D through P6-2J | Long-running monitor, processing handoff, CLI and admin UI implemented |
+| P6-Deploy | Local LaunchAgent, log rotation, backup and restore verification completed |
+| P6-Deploy-5 | Final delivery acceptance passed; production disaster restore not executed |
 
 See:
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation status](docs/IMPLEMENTATION_STATUS.md)
+- [Production recovery runbook (ZH)](docs/PRODUCTION_RECOVERY_RUNBOOK.zh-CN.md)
+- [Final delivery acceptance (ZH)](docs/P6_DEPLOY_5_FINAL_ACCEPTANCE.zh-CN.md)
 - [P6-2C-1 monitor dry-run design](docs/P6-2C-1_MONITOR_DRY_RUN_DESIGN.md)
 - [P6-2D monitor runtime design (ZH)](docs/P6-2D_MONITOR_RUNTIME_DESIGN.zh-CN.md)
 
@@ -192,8 +196,8 @@ P6-2D implements the long-running monitor runtime lifecycle for:
 - graceful shutdown
 - production lifecycle
 
-It still does not enable production ingest: no database writes, parser,
-normalizer, dedup, bot notification, media download, or history backfill.
+The long-running monitor now hands messages to the ingestion and processing
+boundaries. Media download and history backfill remain out of scope.
 
 ## Useful Verification Commands
 

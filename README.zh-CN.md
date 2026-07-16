@@ -4,7 +4,7 @@
 
 Telegram 资源聚合后端。
 
-`tg-hub` 用于接收 Telegram 资源消息，解析并归一化资源元数据，完成资源去重，提供查询和 Bot 通知所需的只读模型。目前项目正在以严格分阶段方式接入 Telegram monitor。
+`tg-hub` 用于监听 Telegram 资源消息，完成入库、解析、归一化、去重、查询和可选 Bot 通知，并提供本机可视化管理台与受控运维能力。
 
 ## 当前状态
 
@@ -20,13 +20,17 @@ Telegram 资源聚合后端。
 | P6-2C-0B 受控频道解析 | 已实现 |
 | P6-2C-1 监听 dry-run 设计 | 已锁定 |
 | P6-2C-2 短时真实监听 dry-run | 已实现 |
-| P6-2D 长期 monitor runtime | 生命周期已实现，生产入库未启用 |
+| P6-2D 至 P6-2J | 长期监听、主链路、CLI 与管理台已实现 |
+| P6-Deploy | 本机 LaunchAgent、日志轮转、备份/恢复验证已完成 |
+| P6-Deploy-5 | 最终交付验收通过；真实生产恢复未执行 |
 
 相关文档：
 
 - [项目使用说明书](docs/USER_GUIDE.zh-CN.md)
 - [架构文档](docs/ARCHITECTURE.md)
 - [实施进度](docs/IMPLEMENTATION_STATUS.md)
+- [生产恢复 Runbook](docs/PRODUCTION_RECOVERY_RUNBOOK.zh-CN.md)
+- [最终交付验收](docs/P6_DEPLOY_5_FINAL_ACCEPTANCE.zh-CN.md)
 - [P6-2C-1 monitor dry-run 设计](docs/P6-2C-1_MONITOR_DRY_RUN_DESIGN.md)
 - [P6-2D monitor runtime 设计](docs/P6-2D_MONITOR_RUNTIME_DESIGN.zh-CN.md)
 
@@ -188,7 +192,7 @@ P6-2D 已实现长期 monitor runtime 生命周期，覆盖：
 - 优雅停机
 - 生产生命周期
 
-但仍未启用生产入库：不写数据库，不调用 Parser / Normalizer / Dedup，不发送 Bot 通知，不下载媒体，也不回溯历史消息。
+长期 Monitor 已通过 application boundary 接入入库、Parser、Normalizer、Dedup 和 EventBus；Bot 通知仅在对应配置完整时启用。history backfill 和媒体下载仍不在当前范围。
 
 ## 常用验证命令
 
