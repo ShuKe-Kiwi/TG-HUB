@@ -70,8 +70,9 @@
 - Telethon `disconnect()` 返回 Future 的真实环境兼容问题已修复，完整回归为 `533 passed`。
 - `P6-Arch-Fix-1` 已完成：真实 Telethon adapter 生成版本化受控 payload 和媒体引用，ingestion 原样保存；RawMessage 到 Channel 的外键已改为 `ON DELETE RESTRICT`，完整迁移链和 `537` 项回归通过。
 - `P6-Deploy-3D-4` 已完成归档：真实轮转、Session 锁竞争和完整在线预检均通过；`StartInterval=3600` 后续自然周期属于非阻塞运维观察。
-- `P6-Deploy-4B` 已完成真实生产备份验收；`P6-Deploy-4C-C1` 已完成实现，专项测试 `38 passed, 3 skipped`，完整回归 `600 passed, 3 skipped`。`P6-Deploy-4C-C2` 已使用真实 4B package 完成随机隔离库 restore、schema/constraint/integrity 只读验证和 guarded DROP；无需 cleanup，隔离数据库与 recovery record 均无残留。4D-1B、生产恢复和 `P6-Deploy-5` 均未授权。
+- `P6-Deploy-4B` 已完成真实生产备份验收；`P6-Deploy-4C-C1/C2` 已完成实现与真实隔离恢复，schema/constraint/integrity 验证和 guarded DROP 均通过。后续 4D-1B-2 已对同一真实 package 重跑 C2 并签发 valid verification Sidecar；生产恢复和 `P6-Deploy-5` 仍未授权。
 - `P6-Deploy-4D-1/1B-1/1B-2` 已完成：只读 backup inventory、verification sidecar store、C2 sidecar integration、recovery-owned restore snapshot 和 cleanup 已实现；真实 4B package 已重新完成隔离恢复，schema/constraint/integrity 全部通过，guarded DROP 后原子签发 Sidecar。Inventory 已投影 `restore_verified=yes`、`verification_status=valid`，无隔离库、recovery record 或 snapshot 遗留；完整回归 `619 passed, 3 skipped`。未执行 pin、retention 或生产恢复。
+- `P6-Deploy-4D-2` 设计与独立复审已通过，允许实现 deterministic selection、canonical snapshot、plan/dry-run、非真实 pin/unpin 和 temp-only apply engine；代码尚未开始。真实 pin、生产 apply CLI 和真实 retention 删除仍未授权。
 
 ---
 
@@ -137,7 +138,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已完成 `P6-Deploy-4B`、`P6-Deploy-4C-C1/C2` 和 `P6-Deploy-4D-1/1B-1/1B-2`。下一步必须单独评审并授权 4D-2 retention / pin；真实 pin、真实 retention、4D-4、生产恢复及 Deploy-5 仍需分别授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已完成 `P6-Deploy-4B`、`P6-Deploy-4C-C1/C2` 和 `P6-Deploy-4D-1/1B-1/1B-2`；4D-2 retention / pin 设计已通过独立复审，下一步只允许代码实现和 fake/temp 测试。真实 pin、生产 apply CLI、真实 retention、4D-4、生产恢复及 Deploy-5 仍需分别授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 

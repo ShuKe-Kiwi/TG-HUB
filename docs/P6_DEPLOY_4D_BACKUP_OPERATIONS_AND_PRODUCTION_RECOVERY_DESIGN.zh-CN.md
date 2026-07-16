@@ -2,11 +2,12 @@
 
 > 项目：tg-hub
 > 阶段：P6-Deploy-4D / Production Recovery
-> 状态：4D-1-implementation-complete / later-gates-closed
-> 前置：P6-Deploy-4B、P6-Deploy-4C-C1/C2 已完成
+> 状态：4D-2-design-reviewed / implementation-approved / real-gates-closed
+> 前置：P6-Deploy-4B、P6-Deploy-4C-C1/C2、P6-Deploy-4D-1/1B-1/1B-2 已完成
 > ALLOW_P6_DEPLOY_4D_1：yes
-> ALLOW_P6_DEPLOY_4D_1B：no
-> ALLOW_P6_DEPLOY_4D_2：no
+> ALLOW_P6_DEPLOY_4D_1B：complete
+> ALLOW_P6_DEPLOY_4D_2：yes
+> ALLOW_RETENTION_APPLY_IMPLEMENTATION：yes-temp-only
 > ALLOW_P6_DEPLOY_4D_4：no
 > ALLOW_REAL_PIN_WRITE：no
 > ALLOW_PRODUCTION_RESTORE_IMPLEMENTATION：no
@@ -90,9 +91,14 @@ BackupOperationsService
 - protected/deletable 分类；
 - dry-run 删除计划；
 - pin/unpin 的独立受控命令和审计记录；
+- apply engine 的临时目录/fake adapter 实现与崩溃恢复测试；
 - 单元测试和临时目录集成测试。
 
-禁止删除真实 `BACKUP_DIR` 中的 package。
+4D-2 对外只允许 `plan/dry-run`。生产 `apply` CLI 不得安装；若共用 CLI parser，生产配置
+调用必须在读取 plan 或获取 lock 前稳定返回 `BACKUP_RETENTION_APPLY_NOT_AUTHORIZED`。
+apply engine 只能通过测试注入的临时 backup root/fake adapter 和不可序列化的
+`temp_mutation_capability` 调用；production factory 不构造、不导出该 capability。禁止修改
+真实 `BACKUP_DIR` 中的 pin 或 package。
 
 ### 4D-3：真实 retention 验收
 
@@ -201,7 +207,81 @@ reason_code:
 ```
 
 不允许自由文本 reason、用户名、路径或备注。目录 `0700`、文件 `0600`，使用 safe-open、
-atomic replace 和 directory fsync。pin/unpin 获取 `.backup.lock` exclusive/non-blocking。
+create-if-absent 或 durable unlink 和 directory fsync。pin/unpin 获取 `.backup.lock`
+exclusive/non-blocking。
+
+第一版 pin 状态机固定为：
+
+```text
+pin:
+  missing + package exact-valid
+    -> create-if-absent
+    -> safe-open read-back
+  existing exact-valid + same reason
+    -> idempotent success
+    -> preserve pinned_at_utc and mtime
+  existing exact-valid + different reason
+    -> BACKUP_PIN_REASON_CONFLICT
+    -> no rewrite
+  invalid / mismatched / unsupported / orphan
+    -> manual_review
+    -> no overwrite
+
+unpin:
+  missing
+    -> idempotent success
+  existing exact-valid + package exact-valid
+    -> durable unlink
+    -> directory fsync
+  invalid / mismatched / unsupported / orphan
+    -> manual_review
+    -> no unlink
+```
+
+第一版不提供 repin。reason 变化必须先完成一次受控 unpin，再执行新的 pin；两个操作分别
+审计，不合并成一次无记录覆盖。recovery hold 与普通 pin 独立，unpin 不得删除或弱化 hold。
+
+pin/unpin 审计使用私有 operation journal：
+
+```text
+<BACKUP_DIR>/.pin-audit/<operation_id>.json
+
+schema_version: 1
+operation_id
+operation: pin | unpin
+backup_id
+requested_reason_code
+observed_before_identity
+result_identity
+phase: planned | mutation_started | mutation_committed | completed
+result: created | removed | idempotent | rejected | cancelled | null
+error_code
+completed_at_utc | null
+```
+
+审计目录 `0700`、记录 `0600`。`planned` 必须在 sidecar 动作前 create-once 并完成
+file/directory fsync；写入 `mutation_started` 后才可 create/unlink sidecar。动作完成并
+read-back 后写 `mutation_committed`，最后写 `completed`。每次 phase 更新均 atomic replace、
+file/directory fsync。
+
+reconcile 在 exclusive backup lock 内比较 journal 的 before/result identity 与当前 sidecar：
+
+```text
+planned:
+  sidecar == before -> 可标记 rejected/cancelled 后 completed，不执行旧动作
+  其他状态 -> manual_review
+mutation_started:
+  sidecar == before -> 动作未发生，可按原 operation 重试
+  sidecar == intended result -> 动作已发生，推进 mutation_committed
+  其他状态 -> manual_review
+mutation_committed:
+  sidecar == intended result -> completed
+  其他状态 -> manual_review
+```
+
+动作成功但后续 audit phase 写入失败时返回 `BACKUP_PIN_AUDIT_WRITE_FAILED`，不得反向撤销
+已完成的 pin/unpin。未终结 pin journal 使 retention inventory unsafe。审计 journal 不是 pin
+真值源，也不直接参与 candidate selection，但其未终结状态会阻止 plan。
 
 孤立 pin（对应 package 不存在）不自动删除，报告 `BACKUP_PIN_ORPHANED`，等待人工处理。
 
@@ -215,6 +295,11 @@ ALLOW_REAL_RETENTION_DELETE
 ```
 
 允许实现 pin 命令不等于允许修改真实 backup root。
+4D-2 的 pin/unpin mutation service 必须要求测试注入、不可序列化的
+`temp_pin_mutation_capability`，并验证 capability 绑定的临时 root identity；production
+factory 不构造该 capability，生产 pin/unpin CLI 不安装。任何生产配置调用必须在创建 audit、
+获取 lock 或写 sidecar 前返回 `BACKUP_PIN_WRITE_NOT_AUTHORIZED`。真实 pin 写入只能在实现
+提交后的独立 Gate 中授权。
 
 ## 5.1 Restore verification sidecar
 
@@ -322,10 +407,15 @@ minimum_valid_packages: 2
 archive_budget_bytes: 5 GiB
 ```
 
-预算只计算 final package，不包含 active temp、lock、pin sidecar 和 recovery record；
+预算只计算 final package，不包含 active temp、lock、pin/verification/hold sidecar、pin audit、
+plan/journal 和 recovery record；
 同时输出 `total_observed_bytes`，但不得把 excluded bytes 伪装成零。
 
 slot 时间源只使用 manifest `created_at_utc`，不得使用目录 mtime、ctime 或遍历顺序。
+每个 plan 在 backup shared lock 内从注入的 UTC clock 读取一次
+`selection_reference_at_utc`，并令其等于 `created_at_utc`。最近 7 个 UTC calendar day 和
+最近 4 个 ISO UTC week 均以该时间为唯一窗口锚点；apply/resume 不读取当前时间，也不重新
+计算 slot。时间必须 timezone-aware UTC，测试使用固定 clock。
 
 选择顺序：
 
@@ -350,13 +440,47 @@ slot 时间源只使用 manifest `created_at_utc`，不得使用目录 mtime、c
 至少保留一个 `restore_verified=yes` 的 package。第一版不修改 manifest；恢复验证状态使用
 独立、原子、私有 verification sidecar，并绑定 backup checksum identity。
 
+## 6.1 Canonical inventory snapshot
+
+retention 使用独立内部 frozen DTO，不直接把公开 `BackupInventoryItem` 当删除授权。
+`.backup.lock`、`.tmp`、`.pins`、`.pin-audit`、`.verifications`、`.recovery-holds` 和
+`.retention-pending` 是固定 reserved roots；其他 dot-entry 仍属于 unrecognized。plan 前
+若存在 invalid/manual-review package、unrecognized root entry、orphan pin/verification/hold、
+非空 `.retention-pending` 或未终结 journal，必须返回
+`BACKUP_RETENTION_INVENTORY_UNSAFE`，candidate 为空。
+
+canonical snapshot 对每个 canonical package 固定记录并按 `backup_id ASC` 排序：
+
+```text
+backup_id
+created_at_utc
+manifest_sha256
+database_dump_sha256 + size
+watchlist_snapshot_sha256 + size
+package_bytes
+verification sidecar content identity or missing
+pin sidecar content identity or missing
+recovery hold content identity or missing
+valid / restore_verified / protected inputs
+```
+
+snapshot 还包含 policy namespace/version、selection algorithm version、
+`selection_reference_at_utc`、root logical identity 和 root device/inode。canonical JSON 使用
+UTF-8、key 排序、无额外空白、UTC `Z` 表示和十进制整数；其 SHA-256 即
+`canonical_inventory_snapshot_digest`。不得纳入路径、mtime、用户名或遍历顺序。
+
+stale 矩阵固定为：新增/删除 canonical package、package identity 变化、pin/verification/hold
+新增删除或内容变化、policy/clock anchor/root identity 变化，均使未执行 plan stale；仅由
+当前 journal 证明的 plan-owned pending/deleted 变化属于 resume 预期。invalid、orphan、
+unrecognized 或 plan 外 pending 的出现直接 fail closed，不尝试重新选 candidate。
+
 ## 7. Retention 执行与恢复性
 
-dry-run 与真实删除必须是两个命令、两个授权：
+dry-run 与真实删除必须是两个命令、两个授权。4D-2 只安装第一个命令：
 
 ```text
 backup-retention plan
-backup-retention apply --plan-id <opaque-id>
+backup-retention apply --plan-id <opaque-id>  # 4D-3 才允许生产入口
 ```
 
 plan 存放于私有 runtime 目录，至少绑定：
@@ -420,9 +544,53 @@ journal 每次状态转换前后遵守 durable-intent：先写 intent，再执�
 final package
 -> atomic rename to <BACKUP_DIR>/.retention-pending/<backup_id>.<plan_id>
 -> fsync backup root
--> recursive delete pending directory without following symlinks
+-> exact-package delete from verified pending directory
 -> fsync pending parent
 ```
+
+删除原语固定为 dirfd-anchored 操作。backup root 与 pending parent 必须是同一 device 上的
+私有真实目录（`0700`、非 symlink）；final 和 pending 均通过相对名称访问。fresh planned
+状态要求 pending 目标不存在，已存在时绝不覆盖；只有 journal resume 且 pending identity
+精确匹配才可继续。exclusive backup lock 排除本项目并发 writer，同一 Unix 用户在最终
+identity 校验后的恶意替换不属于本阶段威胁模型。
+
+rename 必须使用平台 no-replace 原语（macOS `renameatx_np(RENAME_EXCL)`、Linux
+`renameat2(RENAME_NOREPLACE)` 或等价受测 adapter）。平台不支持时返回
+`BACKUP_RETENTION_NOREPLACE_UNSUPPORTED`，不得退化为可覆盖目标的普通 rename。
+
+由于 final package 的合法文件集固定为 `manifest.json`、`database.dump`、`watchlist.json`
+三个 `0600` regular file，第一版禁止通用递归删除：pending 必须再次证明目录 identity、
+exact file set、每个文件 regular/non-symlink/device/size/hash 与 plan 一致；随后通过 pending
+dirfd 逐个 unlink、fsync dirfd、`rmdir` pending、fsync pending parent。出现 symlink、目录、
+特殊文件、额外条目、mount/device 变化或 identity mismatch 时进入 manual review，不删除
+任何条目。
+
+逐文件删除必须有 candidate journal 内的 durable progress，不能只依赖完整 pending identity：
+
+```text
+ordered_files:
+  - manifest.json
+  - database.dump
+  - watchlist.json
+file_index: 0..3
+file_phase: ready | unlink_started
+current_file_identity: exact identity | null
+directory_remove_phase: ready | rmdir_started | completed
+```
+
+每个文件固定执行：验证前序文件缺失、当前及后续文件 identity 精确匹配；写
+`unlink_started` durable intent；通过 pending dirfd unlink；fsync pending dirfd；推进
+`file_index` 并恢复 `ready`。崩溃重入时：
+
+- `ready`：当前文件必须存在且 identity 精确匹配，否则 manual review；
+- `unlink_started` 且当前文件存在并匹配：重试 unlink；
+- `unlink_started` 且当前文件缺失、前序均缺失、后续均精确匹配：认定 unlink 已完成并推进；
+- 任一前序文件重新出现、后续文件缺失或 identity 不同：manual review。
+
+三个文件均完成后先写 `rmdir_started`，再要求目录为空、identity 未变后 rmdir 并 fsync
+pending parent；`rmdir_started` 且目录已缺失时，在 parent/root identity 与唯一 pending path
+证明成立后推进 `completed`。因此任意文件之间崩溃均可确定性收敛，不要求 partial pending
+继续满足原完整 package identity。
 
 rename 成功后 package 不再是有效备份。删除失败保留 pending 并返回
 `BACKUP_RETENTION_CLEANUP_REQUIRED`。普通 inventory 和 restore 不得读取 pending。
@@ -434,14 +602,16 @@ apply 不承诺跨多个 package 的事务原子性；结果必须逐项报告 `
 - journal 为 `pending`：final 缺失且 exact pending identity 匹配，写 `delete_started` 后
   继续 guarded delete；
 - journal 为 `delete_started`：
-  - final 缺失且 exact pending identity 匹配：delete 尚未完成，继续 guarded delete；
+  - final 缺失且 pending 存在：按 `file_index/file_phase/directory_remove_phase` 协调完整或
+    partial pending，不再要求三个文件仍组成完整 package；
   - final 缺失且 exact pending 不存在：只有 journal 已持久化 pending identity、pending
     path 可由 backup ID + plan ID 唯一推导、同 backup ID 无其他 pending、backup root 与
-    pending parent identity 未变化时，才认定 delete 已完成并补写 `deleted`；
+    pending parent identity 未变化，且 `directory_remove_phase=rmdir_started` 时，才认定 delete
+    已完成并补写 `deleted`；
   - 其他状态进入 manual review；
 - journal 为 `cleanup_required`：
-  - final 缺失且 exact pending identity 匹配：写 `delete_started` 并重试 guarded delete；
-  - final 缺失且 pending 不存在，且满足上述 delete_started 缺失证明：写 `deleted`；
+  - final 缺失且 pending 存在：写 `delete_started` 并按 durable file progress 重试；
+  - final 缺失且 pending 不存在，且满足上述 `rmdir_started` 缺失证明：写 `deleted`；
   - final 存在：invariant violation，manual review；
   - pending path/identity 不匹配：manual review；
   - 只允许转换到 `delete_started` 或 `deleted`，不是终态；
@@ -456,6 +626,11 @@ apply 不承诺跨多个 package 的事务原子性；结果必须逐项报告 `
 
 apply resume 必须继续原 plan 中尚未完成的 candidate；如存在 cleanup_required，则先收敛
 该项，不能跳过后继续删除其他 package。
+
+plan 与 journal 生命周期固定为：plan immutable create-once；journal atomic replace 且只允许
+合法状态转换。4D-2/4D-3 不自动删除 plan、terminal journal、pin audit 或异常 pending。
+terminal artifacts 保留用于审计；未来若需要清理，必须单独设计 metadata-retention Gate，
+不得复用 package retention。
 
 ## 8. 生产恢复基本策略
 
@@ -1088,7 +1263,7 @@ Deploy-5 final delivery acceptance
 
 ```text
 P6-DEPLOY-4D_DESIGN_REVIEW:
-  result: 4D_1_implementation_complete
+  result: 4D_2_design_review_approved
   architecture_direction: aligned
   previous_review_blockers_addressed: 6
   previous_review_recommendations_addressed: 6
@@ -1096,16 +1271,19 @@ P6-DEPLOY-4D_DESIGN_REVIEW:
   second_review_recommendations_addressed: 5
   third_review_new_blockers_addressed: 4
   third_review_recommendations_addressed: 5
+  fourth_review_blockers_addressed: 4
+  fourth_review_required_clarifications_addressed: 5
   blockers:
-    4D_1: 0
-    later_stages: fourth_review_pending
-  4D_1_focused_tests: 39_passed_1_skipped
-  4D_1_full_regression: 608_passed_3_skipped
-  real_verification_sidecar_issued: no
-  real_backup_package_accessed: no
+    4D_2: 0
+    later_stages: review_pending
+  latest_full_regression: 619_passed_3_skipped
+  real_verification_sidecar_issued: yes
+  real_backup_package_accessed: yes
   allow_P6_Deploy_4D_1: complete
-  allow_P6_Deploy_4D_1B: no
-  allow_P6_Deploy_4D_2: no
+  allow_P6_Deploy_4D_1B: complete
+  allow_P6_Deploy_4D_2: yes
+  allow_retention_apply_implementation: yes_temp_only
+  allow_real_pin_write: no
   allow_real_retention_delete: no
   allow_P6_Deploy_4D_4: no
   allow_production_restore_implementation: no
@@ -1113,7 +1291,6 @@ P6-DEPLOY-4D_DESIGN_REVIEW:
   allow_P6_Deploy_5: no
 ```
 
-第三轮独立复审批准的 4D-1 已完成：inventory/status、verification sidecar store、C2
-integration code 与 fake/temp 测试均已实现，完整回归通过，真实 backup package 未访问，
-真实 sidecar 未签发。下一步只能独立评审 4D-1B，不得连带进入 retention、真实 pin、
-4D-4 或生产恢复。
+4D-1/1B-1/1B-2 已完成，真实 package 已通过隔离恢复并签发 valid verification sidecar。
+第四轮独立复审已批准 4D-2 的 selection、dry-run、pin/unpin 非真实实现和 temp-only apply
+engine。真实 pin、生产 apply CLI、真实 retention 删除、4D-4 和生产恢复仍需分别授权。
