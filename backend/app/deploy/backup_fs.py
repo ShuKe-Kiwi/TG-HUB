@@ -136,9 +136,13 @@ def create_bytes_if_absent(path: Path, payload: bytes, *, token: str) -> bool:
         try:
             os.link(temp, path, follow_symlinks=False)
         except FileExistsError:
-            return False
+            created = False
+        else:
+            created = True
+            fsync_directory(path.parent)
+        temp.unlink()
         fsync_directory(path.parent)
-        return True
+        return created
     except BackupFsError:
         raise
     except OSError as exc:
@@ -148,10 +152,61 @@ def create_bytes_if_absent(path: Path, payload: bytes, *, token: str) -> bool:
     finally:
         if fd is not None:
             os.close(fd)
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if temp.exists() or temp.is_symlink():
+            try:
+                temp.unlink()
+                fsync_directory(path.parent)
+            except (BackupFsError, OSError):
+                pass
+
+
+def copy_regular_snapshot(source: Path, target: Path) -> tuple[str, int]:
+    """Copy one stable source generation into a durable private snapshot."""
+    source_fd = open_regular(source, os.O_RDONLY)
+    target_fd: int | None = None
+    target_created = False
+    try:
+        before = os.fstat(source_fd)
+        remaining = before.st_size
+        digest = hashlib.sha256()
+        target_fd = open_regular(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        target_created = True
+        while remaining:
+            chunk = os.read(source_fd, min(READ_CHUNK_BYTES, remaining))
+            if not chunk:
+                raise BackupFsError("BACKUP_PACKAGE_CHANGED_DURING_VERIFY")
+            digest.update(chunk)
+            write_all(target_fd, chunk)
+            remaining -= len(chunk)
+        after = os.fstat(source_fd)
+        if _identity(before) != _identity(after):
+            raise BackupFsError("BACKUP_PACKAGE_CHANGED_DURING_VERIFY")
+        os.fsync(target_fd)
+        os.close(target_fd)
+        target_fd = None
+        fsync_directory(target.parent)
+        return digest.hexdigest(), before.st_size
+    except BaseException:
+        if target_fd is not None:
+            os.close(target_fd)
+            target_fd = None
+        if target_created:
+            try:
+                target.unlink(missing_ok=True)
+                fsync_directory(target.parent)
+            except (BackupFsError, OSError):
+                pass
+        raise
+    finally:
+        os.close(source_fd)
+
+
+def unlink_durable(path: Path) -> None:
+    try:
+        path.unlink()
+        fsync_directory(path.parent)
+    except (BackupFsError, OSError) as exc:
+        raise BackupFsError("BACKUP_PATH_INVALID") from exc
 
 
 def read_regular_exact(path: Path, *, max_bytes: int) -> bytes:

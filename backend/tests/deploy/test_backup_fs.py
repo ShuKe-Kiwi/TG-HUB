@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from app.deploy.backup_fs import BackupFsError, backup_root_lock
+from app.deploy import backup_fs
+from app.deploy.backup_fs import (
+    BackupFsError,
+    backup_root_lock,
+    copy_regular_snapshot,
+    create_bytes_if_absent,
+)
 
 
 def _root(tmp_path: Path) -> Path:
@@ -100,3 +106,38 @@ def test_external_flock_is_observed(tmp_path: Path) -> None:
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+def test_create_if_absent_persists_publish_and_temp_removal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _root(tmp_path)
+    calls: list[Path] = []
+    real_fsync = backup_fs.fsync_directory
+
+    def recording_fsync(path: Path) -> None:
+        calls.append(path)
+        real_fsync(path)
+
+    monkeypatch.setattr(backup_fs, "fsync_directory", recording_fsync)
+
+    created = create_bytes_if_absent(root / "evidence.json", b"{}\n", token="a")
+
+    assert created is True
+    assert calls == [root, root]
+    assert list(root.glob("*.tmp")) == []
+
+
+def test_snapshot_copy_does_not_delete_preexisting_target(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    source = root / "source.dump"
+    target = root / "owned.dump"
+    source.write_bytes(b"source")
+    target.write_bytes(b"existing")
+    source.chmod(0o600)
+    target.chmod(0o600)
+
+    with pytest.raises(BackupFsError, match="BACKUP_PATH_INVALID"):
+        copy_regular_snapshot(source, target)
+
+    assert target.read_bytes() == b"existing"

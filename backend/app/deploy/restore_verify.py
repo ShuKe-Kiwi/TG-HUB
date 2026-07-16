@@ -17,11 +17,16 @@ from app.config import Settings, load_settings
 from app.deploy.backup_fs import (
     BackupFsError,
     backup_root_lock,
+    copy_regular_snapshot,
+    ensure_private_directory,
     read_regular_exact,
     stream_sha256,
+    unlink_durable,
+    validate_backup_root,
 )
 from app.deploy.backup_models import (
     BackupManifest,
+    OPAQUE_ID_PATTERN,
     PgConnectionSpec,
     RestoreRecoveryRecord,
     RestoreCleanupResult,
@@ -94,6 +99,7 @@ class RestoreVerificationService:
         )
         runtime_root = settings.BACKUP_DIR.expanduser().parent / "runtime"
         self.store = recovery_store or RestoreRecoveryStore(runtime_root)
+        self.snapshot_root = runtime_root / "restore-snapshots"
         self.verification_store = verification_store or BackupVerificationStore(
             settings.BACKUP_DIR
         )
@@ -166,6 +172,7 @@ class RestoreVerificationService:
                     "planned", "create_started", "verification_passed", "drop_failed"
                 }:
                     raise RestoreDatabaseError("RESTORE_CLEANUP_GUARD_FAILED")
+                self._cleanup_owned_snapshot(record.opaque_id)
             else:
                 if not state.owner_matches:
                     raise RestoreDatabaseError("RESTORE_TARGET_IDENTITY_MISMATCH")
@@ -184,6 +191,7 @@ class RestoreVerificationService:
                     raise RestoreDatabaseError("RESTORE_TARGET_IN_USE")
                 if state.prepared_transactions:
                     raise RestoreDatabaseError("RESTORE_TARGET_PREPARED_XACT")
+                self._cleanup_owned_snapshot(record.opaque_id)
                 try:
                     await adapter.drop_target(record.generated_target_name)
                     dropped = True
@@ -274,23 +282,40 @@ class RestoreVerificationService:
             record = self.store.advance(record, "identity_committed")
             if not await adapter.current_database_is(target):
                 raise RestoreDatabaseError("RESTORE_TARGET_IDENTITY_MISMATCH")
+            snapshot = self._create_restore_snapshot(
+                root, backup_id, record.opaque_id
+            )
+            if (
+                snapshot[1] != initial_identity.database_dump_sha256
+                or snapshot[2] != initial_identity.database_dump_size
+            ):
+                self._remove_restore_snapshot(snapshot[0])
+                raise BackupFsError("BACKUP_PACKAGE_CHANGED_DURING_VERIFY")
             record = self.store.advance(record, "restore_started")
             env = build_libpq_env(
                 spec.model_copy(update={"database": target}),
                 parent_env=os.environ,
                 path=str(pg_restore.parent),
             )
-            restore = await self.runner.run(
-                [
-                    pg_restore,
-                    f"--dbname={target}",
-                    "--no-owner",
-                    "--no-acl",
-                    "--exit-on-error",
-                    root / backup_id / "database.dump",
-                ],
-                env=env,
-            )
+            try:
+                restore = await self.runner.run(
+                    [
+                        pg_restore,
+                        "--no-owner",
+                        "--no-acl",
+                        "--exit-on-error",
+                        snapshot[0],
+                    ],
+                    env=env,
+                )
+            except BaseException:
+                try:
+                    self._remove_restore_snapshot(snapshot[0])
+                except BackupServiceError:
+                    pass
+                raise
+            else:
+                self._remove_restore_snapshot(snapshot[0])
             if restore.returncode:
                 record = self.store.advance(record, "restore_failed")
                 return self._failed_with_record(
@@ -320,6 +345,7 @@ class RestoreVerificationService:
                 record = self.store.advance(record, "drop_failed")
                 raise RestoreDatabaseError("RESTORE_DROP_FAILED")
             target_dropped = True
+            self._cleanup_owned_snapshot(record.opaque_id)
             self.store.delete(record.opaque_id)
             try:
                 final_identity = self._capture_package_identity(root, backup_id)
@@ -422,6 +448,17 @@ class RestoreVerificationService:
                 schema_verified, constraints_verified, integrity_verified,
                 target_dropped,
             )
+        except BackupFsError as exc:
+            code = (
+                "BACKUP_PACKAGE_CHANGED_DURING_VERIFY"
+                if exc.error_code == "BACKUP_PACKAGE_CHANGED_DURING_VERIFY"
+                else "RESTORE_SNAPSHOT_FAILED"
+            )
+            return self._failed_with_optional_record(
+                backup_id, record, code, target_created, restore_completed,
+                schema_verified, constraints_verified, integrity_verified,
+                target_dropped,
+            )
         except (RestoreDatabaseError, RestoreRecoveryError) as exc:
             return self._failed_with_optional_record(
                 backup_id, record, exc.error_code, target_created, restore_completed,
@@ -485,6 +522,54 @@ class RestoreVerificationService:
                 stat.S_IFMT(package_info.st_mode),
             ),
         )
+
+    def _create_restore_snapshot(
+        self, root: Path, backup_id: str, opaque_id: str
+    ) -> tuple[Path, str, int]:
+        try:
+            ensure_private_directory(self.snapshot_root)
+            path = self._snapshot_path(opaque_id)
+            digest, size = copy_regular_snapshot(
+                root / backup_id / "database.dump", path
+            )
+            return path, digest, size
+        except BackupFsError:
+            raise
+        except OSError as exc:
+            raise BackupFsError("BACKUP_PATH_INVALID") from exc
+
+    @staticmethod
+    def _remove_restore_snapshot(path: Path) -> None:
+        try:
+            unlink_durable(path)
+        except BackupFsError as exc:
+            raise BackupServiceError("RESTORE_SNAPSHOT_CLEANUP_FAILED") from exc
+
+    def _cleanup_owned_snapshot(self, opaque_id: str) -> None:
+        try:
+            path = self._snapshot_path(opaque_id)
+            if not self.snapshot_root.exists() and not self.snapshot_root.is_symlink():
+                return
+            validate_backup_root(self.snapshot_root)
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                return
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
+                raise BackupFsError("BACKUP_PATH_INVALID")
+            unlink_durable(path)
+        except (BackupFsError, OSError, ValueError) as exc:
+            raise RestoreRecoveryError(
+                "RESTORE_SNAPSHOT_CLEANUP_FAILED"
+            ) from exc
+
+    def _snapshot_path(self, opaque_id: str) -> Path:
+        if not OPAQUE_ID_PATTERN.fullmatch(opaque_id):
+            raise ValueError("invalid restore recovery identity")
+        return self.snapshot_root / f"{opaque_id}.dump"
 
     @staticmethod
     def _same_package_identity(

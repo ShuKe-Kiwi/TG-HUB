@@ -96,26 +96,7 @@ class BackupVerificationStore:
     def _read_exact(
         self, expected: BackupVerificationSidecar
     ) -> BackupVerificationSidecar:
-        try:
-            validate_backup_root(self.root)
-            path = self._path(expected.backup_id)
-            info = path.lstat()
-            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
-                raise BackupVerificationError(
-                    "BACKUP_VERIFICATION_IDENTITY_INVALID"
-                )
-            actual = BackupVerificationSidecar.model_validate_json(
-                read_regular_exact(
-                    path,
-                    max_bytes=MAX_VERIFICATION_SIDECAR_BYTES,
-                )
-            )
-        except BackupVerificationError:
-            raise
-        except (BackupFsError, OSError, ValidationError, ValueError) as exc:
-            raise BackupVerificationError(
-                "BACKUP_VERIFICATION_IDENTITY_INVALID"
-            ) from exc
+        actual = self._read_sidecar(expected.backup_id)
         if (
             actual.backup_id != expected.backup_id
             or actual.manifest_sha256 != expected.manifest_sha256
@@ -130,6 +111,28 @@ class BackupVerificationStore:
             )
         return actual
 
+    def _read_sidecar(self, backup_id: str) -> BackupVerificationSidecar:
+        try:
+            validate_backup_root(self.root)
+            path = self._path(backup_id)
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
+                raise BackupVerificationError(
+                    "BACKUP_VERIFICATION_IDENTITY_INVALID"
+                )
+            return BackupVerificationSidecar.model_validate_json(
+                read_regular_exact(
+                    path,
+                    max_bytes=MAX_VERIFICATION_SIDECAR_BYTES,
+                )
+            )
+        except BackupVerificationError:
+            raise
+        except (BackupFsError, OSError, ValidationError, ValueError) as exc:
+            raise BackupVerificationError(
+                "BACKUP_VERIFICATION_IDENTITY_INVALID"
+            ) from exc
+
     def observe(
         self,
         *,
@@ -143,12 +146,14 @@ class BackupVerificationStore:
             path = self._path(manifest.backup_id)
             if not path.exists() and not path.is_symlink():
                 return VerificationObservation("missing", "no")
-            payload = read_regular_exact(
-                path,
-                max_bytes=MAX_VERIFICATION_SIDECAR_BYTES,
-            )
-            sidecar = BackupVerificationSidecar.model_validate_json(payload)
-        except (BackupFsError, ValidationError, ValueError, OSError):
+            sidecar = self._read_sidecar(manifest.backup_id)
+        except (
+            BackupFsError,
+            BackupVerificationError,
+            ValidationError,
+            ValueError,
+            OSError,
+        ):
             return VerificationObservation(
                 "invalid",
                 "no",

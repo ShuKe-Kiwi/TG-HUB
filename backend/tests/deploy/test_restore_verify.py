@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import getpass
 import hashlib
 import os
@@ -18,7 +19,9 @@ from app.deploy.backup_models import (
     DatabaseBackupManifest,
     WatchlistBackupManifest,
 )
+from app.deploy.backup_fs import stream_sha256
 from app.deploy.backup_service import (
+    BackupServiceError,
     PgToolRunner,
     ToolResult,
     build_libpq_env,
@@ -61,6 +64,32 @@ class FakeRunner:
         if "--version" in values:
             return ToolResult(0, b"pg_restore (PostgreSQL) 16.4\n", b"")
         return ToolResult(self.restore_returncode, b"", b"failed")
+
+
+class AbaMutationRunner(FakeRunner):
+    def __init__(self, source: Path) -> None:
+        super().__init__()
+        self.source = source
+        self.restored_payload: bytes | None = None
+
+    async def run(self, argv, *, env, cwd=None) -> ToolResult:
+        values = [str(value) for value in argv]
+        if "--version" in values:
+            return await super().run(argv, env=env, cwd=cwd)
+        self.calls.append((values, dict(env)))
+        original = self.source.read_bytes()
+        self.source.write_bytes(b"temporary-aba-content")
+        self.restored_payload = Path(values[-1]).read_bytes()
+        self.source.write_bytes(original)
+        return ToolResult(0, b"", b"")
+
+
+class CancellingRunner(FakeRunner):
+    async def run(self, argv, *, env, cwd=None) -> ToolResult:
+        values = [str(value) for value in argv]
+        if "--version" in values:
+            return await super().run(argv, env=env, cwd=cwd)
+        raise asyncio.CancelledError
 
 
 class CapturingPgToolRunner(PgToolRunner):
@@ -226,15 +255,68 @@ async def test_run_uses_env_target_and_completes_fake_lifecycle(tmp_path) -> Non
 
     assert result.status == "pass", result.error_code
     restore_argv, restore_env = runner.calls[-1]
-    dbname_args = [value for value in restore_argv if value.startswith("--dbname=")]
-    assert dbname_args == [f"--dbname={restore_env['PGDATABASE']}"]
-    assert "--dbname=tg_hub" not in restore_argv
+    assert not any(value.startswith("--dbname") for value in restore_argv)
     assert "-d" not in restore_argv
-    assert sum(restore_env["PGDATABASE"] in value for value in restore_argv) == 1
+    assert all(restore_env["PGDATABASE"] not in value for value in restore_argv)
     assert restore_env["PGDATABASE"].startswith("tg_hub_restore_verify_")
     assert adapter.drop_calls == 1
     assert adapter.closed is True
     assert len(service.verification_store.writes) == 1
+    assert list(service.store.root.glob("*.json")) == []
+    snapshot_path = Path(restore_argv[-1])
+    assert snapshot_path.parent == service.snapshot_root
+    assert snapshot_path != service.settings.BACKUP_DIR / BACKUP_ID / "database.dump"
+    assert snapshot_path.exists() is False
+
+
+async def test_restore_uses_private_snapshot_across_source_aba_mutation(
+    tmp_path,
+) -> None:
+    service, _, _ = _service(tmp_path)
+    source = service.settings.BACKUP_DIR / BACKUP_ID / "database.dump"
+    runner = AbaMutationRunner(source)
+    service.runner = runner
+
+    result = await service.run(BACKUP_ID)
+
+    assert result.status == "pass", result.error_code
+    assert runner.restored_payload == b"fake"
+    assert source.read_bytes() == b"fake"
+    assert list(service.snapshot_root.glob("*.dump")) == []
+
+
+async def test_cancelled_restore_retains_owned_snapshot_until_cleanup(
+    tmp_path,
+) -> None:
+    service, _, adapter = _service(tmp_path)
+    service.runner = CancellingRunner()
+
+    def fail_immediate_cleanup(path: Path) -> None:
+        raise BackupServiceError("RESTORE_SNAPSHOT_CLEANUP_FAILED")
+
+    service._remove_restore_snapshot = fail_immediate_cleanup
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.run(BACKUP_ID)
+
+    records = list(service.store.root.glob("*.json"))
+    snapshots = list(service.snapshot_root.glob("*.dump"))
+    assert len(records) == 1
+    assert len(snapshots) == 1
+    record = service.store.read(records[0].stem)
+    assert record.phase == "restore_failed"
+    assert snapshots[0].name == f"{record.opaque_id}.dump"
+
+    cleanup = await service.cleanup(
+        backup_id=BACKUP_ID,
+        recovery_record=record.opaque_id,
+    )
+
+    assert cleanup.status == "pass", cleanup.error_code
+    assert cleanup.target_dropped == "yes"
+    assert cleanup.record_deleted == "yes"
+    assert adapter.exists is False
+    assert list(service.snapshot_root.glob("*.dump")) == []
     assert list(service.store.root.glob("*.json")) == []
 
 
@@ -262,6 +344,43 @@ async def test_cleanup_reloads_record_under_lock_and_drops_target(tmp_path) -> N
     assert result.status == "pass", result.error_code
     assert result.target_dropped == "yes"
     assert result.record_deleted == "yes"
+    assert adapter.exists is False
+
+
+async def test_snapshot_cleanup_failure_precedes_drop_and_can_retry(
+    tmp_path,
+) -> None:
+    service, _, adapter = _service(tmp_path, restore_returncode=1)
+    failed = await service.run(BACKUP_ID)
+    original_cleanup = service._cleanup_owned_snapshot
+    attempts = 0
+
+    def fail_once(opaque_id: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RestoreRecoveryError("RESTORE_SNAPSHOT_CLEANUP_FAILED")
+        original_cleanup(opaque_id)
+
+    service._cleanup_owned_snapshot = fail_once
+
+    first = await service.cleanup(
+        backup_id=BACKUP_ID,
+        recovery_record=failed.cleanup_handle,
+    )
+    assert first.status == "fail"
+    assert first.error_code == "RESTORE_SNAPSHOT_CLEANUP_FAILED"
+    assert first.target_dropped == "no"
+    assert first.record_deleted == "no"
+    assert adapter.exists is True
+
+    second = await service.cleanup(
+        backup_id=BACKUP_ID,
+        recovery_record=failed.cleanup_handle,
+    )
+    assert second.status == "pass", second.error_code
+    assert second.target_dropped == "yes"
+    assert second.record_deleted == "yes"
     assert adapter.exists is False
 
 
@@ -392,8 +511,7 @@ async def test_real_temporary_fixture_dump_restore_verify_and_drop(tmp_path) -> 
     os.chmod(backup_root, 0o700)
     dump_path = package / "database.dump"
     manifest_path = package / "manifest.json"
-    manifest_path.write_bytes(b"temporary-fixture-manifest")
-    os.chmod(manifest_path, 0o600)
+    watchlist_path = package / "watchlist.json"
     spec = parse_pg_connection_spec(database_url)
     runner = CapturingPgToolRunner(timeout_seconds=120)
     engine = create_async_engine(database_url)
@@ -418,6 +536,41 @@ async def test_real_temporary_fixture_dump_restore_verify_and_drop(tmp_path) -> 
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.drop_all)
         await engine.dispose()
+    dump_sha256, dump_size = stream_sha256(dump_path)
+    watchlist = b"{}"
+    watchlist_path.write_bytes(watchlist)
+    manifest = BackupManifest(
+        backup_id=BACKUP_ID,
+        created_at_utc=datetime.now(timezone.utc),
+        app_git_commit="a" * 40,
+        git_worktree_clean=True,
+        python_version="3.11",
+        dependency_lock_sha256="b" * 64,
+        alembic_revision=str(revision),
+        config_schema_version=1,
+        database=DatabaseBackupManifest(
+            sha256=dump_sha256,
+            size_bytes=dump_size,
+            source_server_version=f"{server_major}.fixture",
+            source_server_major=server_major,
+            pg_dump_version=f"pg_dump (PostgreSQL) {server_major}.fixture",
+            pg_dump_major=server_major,
+        ),
+        watchlist=WatchlistBackupManifest(
+            sha256=hashlib.sha256(watchlist).hexdigest(),
+            size_bytes=len(watchlist),
+            revision="fixture",
+        ),
+        exclusions=BackupExclusions(
+            production_env="secret_material_excluded",
+            telethon_session="authentication_session_excluded",
+            logs="operational_data_excluded",
+            runtime_state="ephemeral_data_excluded",
+        ),
+    )
+    manifest_path.write_bytes(manifest.model_dump_json().encode("utf-8"))
+    os.chmod(manifest_path, 0o600)
+    os.chmod(watchlist_path, 0o600)
     settings = Settings(
         DATABASE_URL=database_url,
         BACKUP_DIR=backup_root,
@@ -429,16 +582,10 @@ async def test_real_temporary_fixture_dump_restore_verify_and_drop(tmp_path) -> 
         validator=FakeValidator(),
         runner=runner,
         verification_store=FakeVerificationStore(),
+        inventory_service=FakeInventoryService(),
         pg_restore_path=pg_restore,
     )
-    service._load_manifest = lambda *_: SimpleNamespace(
-        alembic_revision=revision,
-        database=SimpleNamespace(
-            source_server_major=server_major,
-            pg_dump_major=server_major,
-        ),
-    )
-    service._expected_head = lambda: revision
+    service._expected_head = lambda: str(revision)
 
     result = await service.run(BACKUP_ID)
 

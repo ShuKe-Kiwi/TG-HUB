@@ -159,3 +159,21 @@ def test_verification_store_rejects_unsupported_newer_schema(tmp_path) -> None:
 
     assert observed.status == "invalid"
     assert observed.restore_verified == "no"
+
+
+def test_verification_store_rejects_valid_sidecar_with_open_permissions(
+    tmp_path,
+) -> None:
+    root = tmp_path / "backups"
+    root.mkdir(mode=0o700)
+    store = BackupVerificationStore(root)
+    manifest = _manifest()
+    store.write_passed(manifest=manifest, manifest_sha256="a" * 64)
+    path = store.root / f"{BACKUP_ID}.json"
+    path.chmod(0o644)
+
+    observed = store.observe(manifest=manifest, manifest_sha256="a" * 64)
+
+    assert observed.status == "invalid"
+    assert observed.restore_verified == "no"
+    assert observed.error_code == "BACKUP_VERIFICATION_IDENTITY_INVALID"
