@@ -876,6 +876,13 @@ def _utc(value: datetime) -> datetime:
 
 async def _main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {"pin", "unpin", "pin-reconcile", "apply", "resume"}:
+        from app.deploy.backup_retention_authorization import (
+            ProductionMutationCommandAdapter,
+        )
+
+        print(ProductionMutationCommandAdapter.reject().model_dump_json())
+        return 1
     if args != ["plan"]:
         print("usage: python -m app.deploy.backup_retention plan")
         return 2
