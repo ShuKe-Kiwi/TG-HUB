@@ -1,7 +1,7 @@
 # TG-HUB 实施进度
 
 > 架构基准：docs/ARCHITECTURE.md V2.2
-> 最后更新：2026-07-14
+> 最后更新：2026-07-16
 
 ---
 
@@ -46,7 +46,7 @@
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
 | P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
-| P6-Deploy-4 | 备份与恢复 | 🚧 4B、4C-C1/C2、4D-1 完成 | 608 全量通过；4D-1B 未授权 |
+| P6-Deploy-4 | 备份与恢复 | 🚧 4D-4A 实现及代码复审完成 | 659 全量通过；真实生产恢复未授权 |
 | P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
 
 ---
@@ -75,6 +75,7 @@
 - `P6-Deploy-4D-2` 已完成实现：deterministic selection、canonical snapshot、plan/dry-run CLI、temp-capability pin/unpin audit/reconcile，以及 no-replace、dirfd-anchored、逐文件 durable progress 的 temp-only apply engine。专项测试 `11 passed`，完整回归 `630 passed, 3 skipped`；未执行真实 plan、pin、生产 apply CLI 或真实 retention 删除。
 - `P6-Deploy-4D-3A` fake/temp 实现与最终代码复审已完成：operation-specific authorization DTO、stable create-once lock identity、nonce/expiry/root/single-use 消费、消费前 durable journal callback、pin reconcile 与 retention resume predecessor lineage，以及生产 CLI fail-closed adapter 均已落地。复审修正了 backup lock 内全量 binding 重验、跨 plan/operation lineage 拼接、orphan lock 复用和 predecessor lock-set TOCTOU；专项测试 `26 passed`，完整回归 `645 passed, 3 skipped`。真实 issuer、真实备份目录读取、真实 pin/apply/resume/delete 均未授权且未执行。
 - `P6-Deploy-4D-3B/Gate A/B1/B2/C` 真实验收已完成：真实只读基线通过；新生产备份已 final-committed；新 package 的 C2 restore/schema/constraint/integrity、guarded DROP、recovery/snapshot cleanup 和 verification sidecar 均通过。最终真实 retention plan 包含 2 个 valid、restore-verified 且受保护的 package，candidate 为 0，结果为 `nothing_to_delete`；Gate D/E 不适用，未执行 pin、authorization consumption、apply、resume 或删除。`P6-Deploy-4D-3` 已归档完成。
+- `P6-Deploy-4D-4A` 契约与纯状态机已实现并通过最终代码复审：严格 Recovery/cleanup DTO、完整正向与 rollback 转换表、verification/service-stop/completion guards、temp-only capability、稳定 lock inode、create-once 私有 record store、stale update 拒绝、fake action 协调器和 production fail-closed adapter 已落地。专项测试 `14 passed`，完整回归 `659 passed, 3 skipped`。尚未进入 4D-4B fake 全流程演练，未读取生产配置、连接 PostgreSQL、操作 LaunchAgent 或执行真实生产恢复。
 
 ---
 
