@@ -74,6 +74,7 @@
 - `P6-Deploy-4D-1/1B-1/1B-2` 已完成：只读 backup inventory、verification sidecar store、C2 sidecar integration、recovery-owned restore snapshot 和 cleanup 已实现；真实 4B package 已重新完成隔离恢复，schema/constraint/integrity 全部通过，guarded DROP 后原子签发 Sidecar。Inventory 已投影 `restore_verified=yes`、`verification_status=valid`，无隔离库、recovery record 或 snapshot 遗留；完整回归 `619 passed, 3 skipped`。未执行 pin、retention 或生产恢复。
 - `P6-Deploy-4D-2` 已完成实现：deterministic selection、canonical snapshot、plan/dry-run CLI、temp-capability pin/unpin audit/reconcile，以及 no-replace、dirfd-anchored、逐文件 durable progress 的 temp-only apply engine。专项测试 `11 passed`，完整回归 `630 passed, 3 skipped`；未执行真实 plan、pin、生产 apply CLI 或真实 retention 删除。
 - `P6-Deploy-4D-3A` fake/temp 实现与最终代码复审已完成：operation-specific authorization DTO、stable create-once lock identity、nonce/expiry/root/single-use 消费、消费前 durable journal callback、pin reconcile 与 retention resume predecessor lineage，以及生产 CLI fail-closed adapter 均已落地。复审修正了 backup lock 内全量 binding 重验、跨 plan/operation lineage 拼接、orphan lock 复用和 predecessor lock-set TOCTOU；专项测试 `26 passed`，完整回归 `645 passed, 3 skipped`。真实 issuer、真实备份目录读取、真实 pin/apply/resume/delete 均未授权且未执行。
+- `P6-Deploy-4D-3B/Gate A/B1/B2/C` 真实验收已完成：真实只读基线通过；新生产备份已 final-committed；新 package 的 C2 restore/schema/constraint/integrity、guarded DROP、recovery/snapshot cleanup 和 verification sidecar 均通过。最终真实 retention plan 包含 2 个 valid、restore-verified 且受保护的 package，candidate 为 0，结果为 `nothing_to_delete`；Gate D/E 不适用，未执行 pin、authorization consumption、apply、resume 或删除。`P6-Deploy-4D-3` 已归档完成。
 
 ---
 
@@ -139,7 +140,7 @@
 
 P6-2K-0 设计文档继续作为未来附加模块的实现基线，但 P6-2K-1A 及后续阶段暂停，不属于当前项目完成门槛。
 
-当前主线已完成 `P6-Deploy-4B`、`P6-Deploy-4C-C1/C2` 和 `P6-Deploy-4D-1/1B-1/1B-2/2/3A`，4D-3A 最终代码复审已通过。后续真实验收 Gate 必须逐项单独授权；真实目录 dry-run、真实 pin、生产 apply、真实 retention、4D-4、生产恢复及 Deploy-5 当前仍未授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
+当前主线已完成 `P6-Deploy-4B`、`P6-Deploy-4C-C1/C2` 和 `P6-Deploy-4D-1/1B-1/1B-2/2/3`。4D-3 真实 Gate A/B1/B2/C 已通过并以 `nothing_to_delete` 收口，未执行真实删除。下一步只允许进入 4D-4 生产恢复操作规范的设计与评审；真实生产恢复及 Deploy-5 当前仍未授权。项目完成并稳定运行后，如仍有运营需求，再恢复 `P6-2K-1A: Trending core contracts`。
 
 ---
 
