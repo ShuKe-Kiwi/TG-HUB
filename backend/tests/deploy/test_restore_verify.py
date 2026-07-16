@@ -255,9 +255,12 @@ async def test_run_uses_env_target_and_completes_fake_lifecycle(tmp_path) -> Non
 
     assert result.status == "pass", result.error_code
     restore_argv, restore_env = runner.calls[-1]
-    assert not any(value.startswith("--dbname") for value in restore_argv)
+    dbname_args = [value for value in restore_argv if value.startswith("--dbname=")]
+    assert dbname_args == [f"--dbname={restore_env['PGDATABASE']}"]
     assert "-d" not in restore_argv
-    assert all(restore_env["PGDATABASE"] not in value for value in restore_argv)
+    assert "--dbname=tg_hub" not in restore_argv
+    assert all("://" not in value for value in restore_argv)
+    assert sum(restore_env["PGDATABASE"] in value for value in restore_argv) == 1
     assert restore_env["PGDATABASE"].startswith("tg_hub_restore_verify_")
     assert adapter.drop_calls == 1
     assert adapter.closed is True

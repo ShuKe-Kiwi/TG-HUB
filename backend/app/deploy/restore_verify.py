@@ -301,6 +301,7 @@ class RestoreVerificationService:
                 restore = await self.runner.run(
                     [
                         pg_restore,
+                        f"--dbname={target}",
                         "--no-owner",
                         "--no-acl",
                         "--exit-on-error",
