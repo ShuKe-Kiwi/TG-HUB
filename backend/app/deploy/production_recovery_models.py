@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.deploy.backup_models import BACKUP_ID_PATTERN, SHA256_PATTERN
 
@@ -40,10 +40,22 @@ class RecoveryContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class StableRecoveryLockIdentity(RecoveryContract):
+    resolved_device: int = Field(ge=0)
+    resolved_inode: int = Field(ge=1)
+
+
 class ResourceIdentities(RecoveryContract):
     original_database_revision: str
+    original_database_component: str
+    original_database_identity: str
+    original_database_owner: str
     replacement_database_identity: str
+    replacement_identity_token: str
     expected_owner_identity: str
+    selected_manifest_sha256: str
+    selected_database_dump_sha256: str
+    selected_watchlist_sha256: str
     original_env_sha256: str
     staged_env_sha256: str
     protected_env_sha256: str | None = None
@@ -58,6 +70,9 @@ class ResourceIdentities(RecoveryContract):
         "original_watchlist_sha256",
         "staged_watchlist_sha256",
         "protected_watchlist_sha256",
+        "selected_manifest_sha256",
+        "selected_database_dump_sha256",
+        "selected_watchlist_sha256",
     )
     @classmethod
     def validate_sha256(cls, value: str | None) -> str | None:
@@ -77,6 +92,10 @@ class ProductionRecoveryRecord(RecoveryContract):
     incident_id: str
     selected_backup_id: str
     protection_backup_id: str | None = None
+    protection_manifest_sha256: str | None = None
+    protection_database_dump_sha256: str | None = None
+    protection_watchlist_sha256: str | None = None
+    stable_lock_identity: StableRecoveryLockIdentity | None = None
     phase: RecoveryPhase = "planned"
     resources: ResourceIdentities
     authorizations: AuthorizationObservations = AuthorizationObservations()
@@ -98,6 +117,9 @@ class ProductionRecoveryRecord(RecoveryContract):
     watchlist_was_switched: YesNo = "no"
     replacement_activated: YesNo = "no"
     monitor_first_write_observed: TriState = "unknown"
+    monitor_generation_id: str | None = None
+    monitor_write_baseline: str | None = None
+    monitor_first_write_observed_at_utc: datetime | None = None
     manual_reconciliation_required: YesNo = "no"
 
     @field_validator("incident_id", "cleanup_record_id")
@@ -114,6 +136,17 @@ class ProductionRecoveryRecord(RecoveryContract):
             raise ValueError("invalid canonical backup id")
         return value
 
+    @field_validator(
+        "protection_manifest_sha256",
+        "protection_database_dump_sha256",
+        "protection_watchlist_sha256",
+    )
+    @classmethod
+    def validate_optional_sha256(cls, value: str | None) -> str | None:
+        if value is not None and not SHA256_PATTERN.fullmatch(value):
+            raise ValueError("invalid sha256 identity")
+        return value
+
     @field_validator("last_error_code", "verification_error_code")
     @classmethod
     def validate_error_code(cls, value: str | None) -> str | None:
@@ -125,6 +158,8 @@ class ProductionRecoveryRecord(RecoveryContract):
     def validate_terminal_state(self) -> "ProductionRecoveryRecord":
         if self.cleanup_completed == "yes" and self.cleanup_requested != "yes":
             raise ValueError("cleanup completion requires request")
+        if self.cleanup_requested == "yes" and self.cleanup_record_id is None:
+            raise ValueError("cleanup request requires child record id")
         if self.replacement_activated == "yes" and self.phase == "planned":
             raise ValueError("planned recovery cannot have activated replacement")
         if (
@@ -132,6 +167,20 @@ class ProductionRecoveryRecord(RecoveryContract):
             != self.authorizations.watchlist_switch_authorized
         ):
             raise ValueError("watchlist authorization observations disagree")
+        protection_identity = (
+            self.protection_backup_id,
+            self.protection_manifest_sha256,
+            self.protection_database_dump_sha256,
+            self.protection_watchlist_sha256,
+        )
+        if self.protection_backup_status == "completed" and any(
+            value is None for value in protection_identity
+        ):
+            raise ValueError("completed protection backup requires frozen identity")
+        if self.protection_backup_status == "skipped_authorized" and any(
+            value is not None for value in protection_identity
+        ):
+            raise ValueError("skipped protection backup forbids package identity")
         return self
 
 
@@ -142,6 +191,7 @@ class ProductionCleanupRecord(RecoveryContract):
     replacement_database_identity: str
     replacement_identity_token: str
     expected_owner_identity: str
+    stable_lock_identity: StableRecoveryLockIdentity
     phase: Literal["planned", "cleanup_started", "cleanup_completed"] = "planned"
     drop_observed: YesNo = "no"
     last_error_code: str | None = None
@@ -151,6 +201,13 @@ class ProductionCleanupRecord(RecoveryContract):
     def validate_id(cls, value: str) -> str:
         if not INCIDENT_ID_PATTERN.fullmatch(value):
             raise ValueError("invalid opaque id")
+        return value
+
+    @field_validator("last_error_code")
+    @classmethod
+    def validate_cleanup_error_code(cls, value: str | None) -> str | None:
+        if value is not None and not STABLE_CODE_PATTERN.fullmatch(value):
+            raise ValueError("invalid stable error code")
         return value
 
 
@@ -235,6 +292,19 @@ def advance_production_recovery(
         or record.protection_backup_id is None
     ):
         raise ValueError("PRODUCTION_RECOVERY_PROTECTION_BACKUP_INVALID")
+    if target == "env_switched" and record.replacement_activated != "yes":
+        raise ValueError("PRODUCTION_RECOVERY_REPLACEMENT_NOT_ACTIVATED")
+    if target == "watchlist_switched" and record.watchlist_was_switched != "yes":
+        raise ValueError("PRODUCTION_RECOVERY_WATCHLIST_NOT_SWITCHED")
+    if target == "monitor_start_authorized" and (
+        record.authorizations.monitor_start_authorized != "yes"
+    ):
+        raise ValueError("PRODUCTION_RECOVERY_MONITOR_START_NOT_AUTHORIZED")
+    if target == "monitor_start_started" and (
+        record.monitor_generation_id is None
+        or record.monitor_write_baseline is None
+    ):
+        raise ValueError("PRODUCTION_RECOVERY_MONITOR_BASELINE_MISSING")
     if record.phase == "env_switched":
         expected = (
             "watchlist_switch_started"

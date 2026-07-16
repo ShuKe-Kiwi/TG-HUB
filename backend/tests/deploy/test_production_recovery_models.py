@@ -19,8 +19,15 @@ def make_record(**updates: object) -> ProductionRecoveryRecord:
         selected_backup_id=BACKUP_ID,
         resources=ResourceIdentities(
             original_database_revision="rev1",
+            original_database_component="tg_hub",
+            original_database_identity="original",
+            original_database_owner="owner",
             replacement_database_identity="replacement",
+            replacement_identity_token="token",
             expected_owner_identity="owner",
+            selected_manifest_sha256="0" * 64,
+            selected_database_dump_sha256="4" * 64,
+            selected_watchlist_sha256="5" * 64,
             original_env_sha256="1" * 64,
             staged_env_sha256="2" * 64,
             original_watchlist_sha256="3" * 64,
@@ -109,3 +116,20 @@ def test_completion_requires_bounded_observation_and_no_manual_reconciliation() 
         monitor_first_write_observed="no",
     )
     assert advance_production_recovery(complete, "completed").phase == "completed"
+
+
+def test_switch_and_monitor_phases_require_durable_facts() -> None:
+    with pytest.raises(ValueError, match="REPLACEMENT_NOT_ACTIVATED"):
+        advance_production_recovery(
+            make_record(phase="env_switch_started"), "env_switched"
+        )
+    with pytest.raises(ValueError, match="MONITOR_START_NOT_AUTHORIZED"):
+        advance_production_recovery(
+            make_record(phase="readiness_passed"), "monitor_start_authorized"
+        )
+    authorized = make_record(
+        phase="monitor_start_authorized",
+        authorizations=AuthorizationObservations(monitor_start_authorized="yes"),
+    )
+    with pytest.raises(ValueError, match="MONITOR_BASELINE_MISSING"):
+        advance_production_recovery(authorized, "monitor_start_started")
