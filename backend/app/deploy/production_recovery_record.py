@@ -66,6 +66,10 @@ class RecoveryOperationLease:
         self.current = updated
         return updated
 
+    def update_facts(self, **changes: object) -> ProductionRecoveryRecord:
+        self.current = self._store._update_facts_unlocked(self.current, changes)
+        return self.current
+
 
 class TempRecoveryCapability:
     __slots__ = ("root", "device", "inode", "process_nonce", "purpose", "_secret")
@@ -223,38 +227,75 @@ class TempRecoveryRecordStore:
             self._require_lock_identity(current, lock_identity)
             if current != record:
                 raise ProductionRecoveryError("PRODUCTION_RECOVERY_RECORD_STALE")
-            if (
-                current.replacement_activated == "yes"
-                and changes.get("replacement_activated") == "no"
-            ):
-                raise ProductionRecoveryError(
-                    "PRODUCTION_RECOVERY_FACT_UPDATE_INVALID"
-                )
-            self._validate_fact_update(current, changes)
-            if "resources" in changes:
-                self._validate_resource_update(current, changes["resources"])
-            if (
-                changes.get("cleanup_completed") == "yes"
-                and current.cleanup_completed != "yes"
-            ):
-                self._require_terminal_cleanup_child(current)
-            try:
-                updated = ProductionRecoveryRecord.model_validate(
-                    {**current.model_dump(mode="python"), **changes}
-                )
-            except (ValueError, ValidationError) as exc:
-                raise ProductionRecoveryError(
-                    "PRODUCTION_RECOVERY_FACT_UPDATE_INVALID"
-                ) from exc
-            try:
-                self._write_unlocked(updated)
-            except ProductionRecoveryError:
-                raise
-            except (BackupFsError, OSError) as exc:
-                raise ProductionRecoveryError(
-                    "PRODUCTION_RECOVERY_RECORD_WRITE_FAILED"
-                ) from exc
-            return updated
+            return self._update_facts_unlocked(current, changes)
+
+    def _update_facts_unlocked(
+        self, current: ProductionRecoveryRecord, changes: dict[str, object]
+    ) -> ProductionRecoveryRecord:
+        allowed = {
+            "protection_backup_id",
+            "protection_manifest_sha256",
+            "protection_database_dump_sha256",
+            "protection_watchlist_sha256",
+            "resources",
+            "authorizations",
+            "last_operation",
+            "last_error_code",
+            "last_error_at_utc",
+            "retryable",
+            "verification_result",
+            "verification_error_code",
+            "monitor_stopped",
+            "session_lease_free",
+            "application_stopped",
+            "application_connections_drained",
+            "cleanup_record_id",
+            "cleanup_requested",
+            "cleanup_completed",
+            "protection_backup_status",
+            "watchlist_switch_authorized",
+            "watchlist_was_switched",
+            "replacement_activated",
+            "monitor_first_write_observed",
+            "monitor_generation_id",
+            "monitor_write_baseline",
+            "monitor_first_write_observed_at_utc",
+            "manual_reconciliation_required",
+        }
+        if not changes or not set(changes) <= allowed:
+            raise ProductionRecoveryError("PRODUCTION_RECOVERY_FACT_UPDATE_INVALID")
+        if (
+            current.replacement_activated == "yes"
+            and changes.get("replacement_activated") == "no"
+        ):
+            raise ProductionRecoveryError(
+                "PRODUCTION_RECOVERY_FACT_UPDATE_INVALID"
+            )
+        self._validate_fact_update(current, changes)
+        if "resources" in changes:
+            self._validate_resource_update(current, changes["resources"])
+        if (
+            changes.get("cleanup_completed") == "yes"
+            and current.cleanup_completed != "yes"
+        ):
+            self._require_terminal_cleanup_child(current)
+        try:
+            updated = ProductionRecoveryRecord.model_validate(
+                {**current.model_dump(mode="python"), **changes}
+            )
+        except (ValueError, ValidationError) as exc:
+            raise ProductionRecoveryError(
+                "PRODUCTION_RECOVERY_FACT_UPDATE_INVALID"
+            ) from exc
+        try:
+            self._write_unlocked(updated)
+        except ProductionRecoveryError:
+            raise
+        except (BackupFsError, OSError) as exc:
+            raise ProductionRecoveryError(
+                "PRODUCTION_RECOVERY_RECORD_WRITE_FAILED"
+            ) from exc
+        return updated
 
     def _require_terminal_cleanup_child(
         self, current: ProductionRecoveryRecord
@@ -433,7 +474,7 @@ class TempRecoveryRecordStore:
                     "PRODUCTION_RECOVERY_RECORD_WRITE_FAILED"
                 ) from exc
             if not created:
-                existing = self._read_cleanup_unlocked(child.cleanup_record_id)
+                existing = self._read_cleanup_for_update(child.cleanup_record_id)
                 if existing != child:
                     raise ProductionRecoveryError(
                         "PRODUCTION_RECOVERY_CLEANUP_IDENTITY_INVALID"

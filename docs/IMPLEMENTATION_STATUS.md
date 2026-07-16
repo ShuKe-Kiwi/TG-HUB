@@ -46,7 +46,7 @@
 | P6-Deploy-3D-2 | rotation status 只读投影 | ✅ 完成 | 回归通过 |
 | P6-Deploy-3D-3 | online session preflight + Session 所有权 | ✅ 实现及真实 E1/E2 验收完成 | 533 全量通过 |
 | P6-Deploy-3D-4 | 真实安装与受控验收 | ✅ 完成并归档 | 真实轮转 2 个归档；Gate A-E2 通过 |
-| P6-Deploy-4 | 备份与恢复 | 🚧 4D-4A-1R 修正及最终复审完成 | 670 全量通过；真实生产恢复未授权 |
+| P6-Deploy-4 | 备份与恢复 | 🚧 4D-4B-R2 修正及最终复审完成 | 727 全量通过；真实生产恢复未授权 |
 | P6-Deploy-5 | 最终交付验收 | ⏳ 未开始 | - |
 
 ---
@@ -77,6 +77,7 @@
 - `P6-Deploy-4D-3B/Gate A/B1/B2/C` 真实验收已完成：真实只读基线通过；新生产备份已 final-committed；新 package 的 C2 restore/schema/constraint/integrity、guarded DROP、recovery/snapshot cleanup 和 verification sidecar 均通过。最终真实 retention plan 包含 2 个 valid、restore-verified 且受保护的 package，candidate 为 0，结果为 `nothing_to_delete`；Gate D/E 不适用，未执行 pin、authorization consumption、apply、resume 或删除。`P6-Deploy-4D-3` 已归档完成。
 - `P6-Deploy-4D-4A` 契约与纯状态机已实现并通过最终代码复审：严格 Recovery/cleanup DTO、完整正向与 rollback 转换表、verification/service-stop/completion guards、temp-only capability、稳定 lock inode、create-once 私有 record store、stale update 拒绝、fake action 协调器和 production fail-closed adapter 已落地。专项测试 `14 passed`，完整回归 `659 passed, 3 skipped`。尚未进入 4D-4B fake 全流程演练，未读取生产配置、连接 PostgreSQL、操作 LaunchAgent 或执行真实生产恢复。
 - `P6-Deploy-4D-4A-1/1R` 前置补丁与最小修正已实现并通过最终代码复审：stable lock identity 已写入 durable record 并支持跨 store 校验；同 phase facts 使用 CAS 和 phase-aware/monotonic 约束；selected/original/protection/Monitor identity 均为冻结或 fill-once；child cleanup 只有在 `cleanup_started` 后才能记录 DROP，main completion 必须在同一锁内读取 terminal child；async orchestrator 持有 nonblocking recovery lease 覆盖完整 worker 生命周期，取消时等待同步或异步 worker 收口后继续传播 `CancelledError`。专项测试 `25 passed`，完整回归 `670 passed, 3 skipped`。4D-4B、临时 PostgreSQL 和真实生产恢复仍未授权。
+- `P6-Deploy-4D-4B/4B-R1/R2` fake 全流程、rollback、跨进程/跨文件崩溃协调与 cleanup 已实现并通过最终代码复审：active config 文件作为外部真值，合法 file-before-snapshot 窗口可补写，错误 phase 的合法 staged 内容仍被拒绝；protection 双文件支持 missing/partial-exact/completed/unknown 协调，只补缺失 copy；fake child cleanup 具备 main request、child create-once、唯一 DROP owner、target absent 收敛、terminal child 后 main completion 和 active replacement 拒绝。Recovery 专项测试 `82 passed, 1 skipped`，完整回归 `727 passed, 4 skipped`。未读取生产配置、未连接 PostgreSQL、未操作 LaunchAgent/Telegram，4D-4C 和真实生产恢复仍未授权。
 
 ---
 
